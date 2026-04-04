@@ -7,3 +7,13 @@ module.exports.generateRandomNumber = (length)=>{
     }
     return result;
 }
+const normalize = (str) => {
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "-")
+    .toUpperCase()
+}
+module.exports.generateCodeVariant= (material, color, size)=>{
+    return `SP-${normalize(material)}-${normalize(color)}-${size}`
+}

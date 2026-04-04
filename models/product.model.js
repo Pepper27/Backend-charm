@@ -3,28 +3,25 @@ const slug = require('mongoose-slug-updater')
 mongoose.plugin(slug)
 
 const variantSchema = new mongoose.Schema({
-    sku: { type: String, unique: true },
-
+    code: { type: String, unique: true },
     material: String,   
     color: String,      
     size: String,   
-
     price: Number,      
     quantity: { type: Number, default: 0 },
     sold: { type: Number, default: 0 },
-
     images: [String]
 })
 
 const schema = new mongoose.Schema({
     name: String,
     description: String,
-    basePrice: Number,
     options: {
         materials: [String],
         colors: [String],
         sizes: [String]
     },
+    category:String,
     variants: [variantSchema],
     createdBy: String,
     updatedBy: String,
