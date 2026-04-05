@@ -5,7 +5,6 @@ const schema = new mongoose.Schema(
     {   
         name: String,
         content: String,
-        position: Number,
         avatar: String,
         createdBy: String,
         updatedBy: String,
