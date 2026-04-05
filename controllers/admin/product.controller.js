@@ -2,6 +2,7 @@ const Product = require("../../models/product.model");
 const helper = require("../../helper/generate.helper")
 module.exports.getProducts = async (req,res)=>{
     try {
+      console.log("1212")
         const find={
             deleted:false
         }
@@ -99,7 +100,6 @@ module.exports.createProduct = async (req, res) => {
 module.exports.getProductById = async (req, res) => {
   try {
     const id = req.params.id;
-
     const product = await Product.findOne({
       _id: id,
       deleted: false
