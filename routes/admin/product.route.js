@@ -8,6 +8,6 @@ const upload = multer({
 router.post("/",upload.any(),productController.createProduct);
 router.get("/",productController.getProducts);
 router.get("/:id",productController.getProductById);
-router.patch("/:id",productController.updateProduct)
-// router.delete("/:id",productController.deleteProduct)
+router.patch("/:id",upload.any(),productController.updateProduct)
+router.delete("/:id",productController.deleteProduct)
 module.exports = router;

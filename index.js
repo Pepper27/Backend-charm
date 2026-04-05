@@ -7,7 +7,16 @@ const indexRouteAdmin  = require('./routes/admin/index.route.js')
 const app = express()
 const port = process.env.PORT || 3888;
 app.set("trust proxy", 1);
-connectDB();
+
+// Connect to MongoDB before accepting requests.
+// This avoids requests hanging when the DB is unreachable.
+const start = async () => {
+  await connectDB();
+
+  app.listen(port, () => {
+    console.log(`Server chạy tại http://localhost:${port}`);
+  });
+};
 const cookieParser = require("cookie-parser");
 app.use(cookieParser("SFGWHSDSGSDSD"));
 app.use(express.json());
@@ -55,6 +64,8 @@ app.use(cors({
   credentials: true,
 }));
 app.use("/api/admin",indexRouteAdmin)
-app.listen(port, () => {
-  console.log(`Server chạy tại http://localhost:${port}`);
+
+start().catch((err) => {
+  console.error("Failed to start server", err);
+  process.exit(1);
 });
