@@ -1,5 +1,18 @@
 const Product = require("../../models/product.model");
 const helper = require("../../helper/generate.helper")
+const mongoose = require("mongoose");
+
+const withTimeout = (query, ms = 8000) => {
+  if (!query?.maxTimeMS) return query;
+  return query.maxTimeMS(ms);
+};
+
+const parseJsonField = (value, fallback) => {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "string") return JSON.parse(value);
+  // Already parsed (application/json) or provided as object/array.
+  return value;
+};
 module.exports.getProducts = async (req,res)=>{
     try {
         const find={
@@ -15,9 +28,11 @@ module.exports.getProducts = async (req,res)=>{
         if(keyword){
             find.slug = { $regex: keyword, $options: "i" }
         }
-        const products = await Product.find(find)
-        .populate({ path: "category", select: "name" }) 
-        .lean();
+        const products = await withTimeout(
+          Product.find(find)
+            .populate({ path: "category", select: "name" })
+            .lean()
+        );
         return res.status(200).json({
             data: products
         });
@@ -32,8 +47,8 @@ module.exports.getProducts = async (req,res)=>{
 module.exports.createProduct = async (req, res) => {
   try {
     const { name, description, category } = req.body;
-    const options = JSON.parse(req.body.options || "{}");
-    const variants = JSON.parse(req.body.variants || "[]");
+    const options = parseJsonField(req.body.options, {});
+    const variants = parseJsonField(req.body.variants, []);
     const files = req.files || [];
 
     const fileMap = {};
@@ -100,10 +115,16 @@ module.exports.getProductById = async (req, res) => {
   try {
     const id = req.params.id;
 
-    const product = await Product.findOne({
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        message: "Id không hợp lệ"
+      });
+    }
+ 
+    const product = await withTimeout(Product.findOne({
       _id: id,
       deleted: false
-    });
+    }));
 
     if (!product) {
       return res.status(404).json({
@@ -111,9 +132,9 @@ module.exports.getProductById = async (req, res) => {
       });
     }
 
-    res.json(product);
+    return res.json(product);
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       message: "Lỗi server",
       error: error.message
     });
@@ -123,12 +144,18 @@ module.exports.updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
 
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        message: "Id không hợp lệ"
+      });
+    }
+
     const { name, description, category } = req.body;
-    const options = JSON.parse(req.body.options || "{}");
-    const variants = JSON.parse(req.body.variants || "[]");
+    const options = parseJsonField(req.body.options, {});
+    const variants = parseJsonField(req.body.variants, []);
     const files = req.files || [];
 
-    const product = await Product.findById(id);
+    const product = await withTimeout(Product.findOne({ _id: id, deleted: false }));
     if (!product) {
       return res.status(404).json({ message: "Không tìm thấy sản phẩm" });
     }
@@ -138,6 +165,10 @@ module.exports.updateProduct = async (req, res) => {
       if (!fileMap[file.fieldname]) fileMap[file.fieldname] = [];
       fileMap[file.fieldname].push(file.path);
     });
+
+    if (!variants.length) {
+      return res.status(400).json({ message: "Chưa có variant nào" });
+    }
 
     const newVariants = [];
     const codesSet = new Set();
@@ -179,6 +210,7 @@ module.exports.updateProduct = async (req, res) => {
     product.category = category || product.category;
     product.options = options || product.options;
     product.variants = newVariants;
+    product.updatedBy = req.account?.id;
 
     await product.save();
 
@@ -195,4 +227,37 @@ module.exports.updateProduct = async (req, res) => {
     });
   }
 };
-// module.exports.deleteProduct = async (req, res) => {}
+
+module.exports.deleteProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        message: "Id không hợp lệ"
+      });
+    }
+
+    const product = await withTimeout(Product.findOne({ _id: id, deleted: false }));
+    if (!product) {
+      return res.status(404).json({ message: "Không tìm thấy sản phẩm" });
+    }
+
+    product.deleted = true;
+    product.deletedAt = new Date();
+    product.deletedBy = req.account?.id;
+
+    await product.save();
+
+    return res.status(200).json({
+      message: "Xóa sản phẩm thành công"
+    });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Lỗi server",
+      error: error.message
+    });
+  }
+}
