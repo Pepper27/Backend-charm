@@ -1,7 +1,7 @@
 const mongoose = require("mongoose")
 const slug = require('mongoose-slug-updater')
 mongoose.plugin(slug)
-
+const { Types } = require("mongoose");
 const variantSchema = new mongoose.Schema({
     code: { type: String, unique: true },
     material: String,   
@@ -21,7 +21,7 @@ const schema = new mongoose.Schema({
         colors: [String],
         sizes: [String]
     },
-    category:String,
+    category: { type: Types.ObjectId, ref: "Category" },
     variants: [variantSchema],
     createdBy: String,
     updatedBy: String,

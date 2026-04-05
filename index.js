@@ -11,10 +11,6 @@ connectDB();
 const cookieParser = require("cookie-parser");
 app.use(cookieParser("SFGWHSDSGSDSD"));
 app.use(express.json());
-
-// Dev-friendly CORS:
-// - allow localhost on any port (CRA may use 3000/3001/3002...)
-// - allow ngrok free domains (they change frequently)
 const isLocalOrigin = (origin) => {
   if (!origin) return false;
   try {
@@ -27,7 +23,6 @@ const isLocalOrigin = (origin) => {
 };
 
 const allowedOrigins = new Set([
-  // Keep explicit list for reference; local origins are handled by isLocalOrigin.
   "http://localhost:3000",
   "http://localhost:3001",
 ]);
@@ -45,7 +40,6 @@ const isAllowedNgrokOrigin = (origin) => {
  
 app.use(cors({
   origin: function(origin, callback){
-    // allow non-browser tools (curl/postman) with no Origin header
     if (!origin) {
       callback(null, true);
       return;
