@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const AccountAdmin = require("../../models/accountAdmin.model");
+const mongoose = require("mongoose");
 
 module.exports.verifyToken = async (req, res, next) => {
   try {
@@ -14,12 +15,18 @@ module.exports.verifyToken = async (req, res, next) => {
         message: "Token không tồn tại hoặc chưa gửi"
       });
     }
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        code: "error",
+        message: "Database chưa sẵn sàng"
+      });
+    }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const existAccount = await AccountAdmin.findOne({
       email: decoded.email,
-    });
+    }).maxTimeMS(5000);
 
     if (!existAccount) {
       return res.status(401).json({
