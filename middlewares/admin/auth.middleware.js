@@ -15,6 +15,8 @@ module.exports.verifyToken = async (req, res, next) => {
         message: "Token không tồn tại hoặc chưa gửi"
       });
     }
+
+    // If Mongo is down/not connected, avoid hanging the request.
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({
         code: "error",
