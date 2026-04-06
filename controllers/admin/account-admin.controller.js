@@ -63,30 +63,30 @@ module.exports.loginPost = async (req,res)=>{
 //end login
 
 //register
-module.exports.registerPost = async (req,res)=>{
-    const {name,email,password} = req.body;
+// module.exports.registerPost = async (req,res)=>{
+//     const {name,email,password} = req.body;
  
-    const existEmail = await AccountAdmin.findOne({
-        email:email
-    })
-    if(existEmail){
-        res.json({
-            code:"error",
-            message:"Email đã tồn tại trong hệ thống!"
-        })
-        return;
-    }
-    const salt = bcrypt.genSaltSync(10);
-    const hash = bcrypt.hashSync(password, salt);
+//     const existEmail = await AccountAdmin.findOne({
+//         email:email
+//     })
+//     if(existEmail){
+//         res.json({
+//             code:"error",
+//             message:"Email đã tồn tại trong hệ thống!"
+//         })
+//         return;
+//     }
+//     const salt = bcrypt.genSaltSync(10);
+//     const hash = bcrypt.hashSync(password, salt);
 
-    const dataFinal = new AccountAdmin({name,email,password:hash,status:"initial"})
+//     const dataFinal = new AccountAdmin({name,email,password:hash,status:"initial"})
 
-    await dataFinal.save()
-    res.json({
-        code:"success",
-        message:"Đăng ký tài khoản thành công!"
-    })
-}    
+//     await dataFinal.save()
+//     res.json({
+//         code:"success",
+//         message:"Đăng ký tài khoản thành công!"
+//     })
+// }    
 //end register
 
 //forgot-password
@@ -234,3 +234,132 @@ module.exports.getName = async (req,res)=>{
     }
 }
 
+module.exports.getAccountAdmins = async (req,res)=>{
+    try {
+        if (!req.account) {
+            return res.status(401).json({
+                message: "Unauthorized"
+            });
+        }
+
+        const user = await AccountAdmin.find({
+            deleted:false
+        });
+
+        if (!user) {
+            return res.status(401).json({
+                message: "Users not found"
+            });
+        }
+
+        return res.status(200).json({
+            data: user
+        });
+
+    } catch (err) {
+        return res.status(500).json({ message: "Lỗi server" });
+    }
+}
+module.exports.getAccountAdminsById = async (req,res)=>{
+    try {
+        const id = req.params.id
+        if (!req.account) {
+            return res.status(401).json({
+                message: "Unauthorized"
+            });
+        }
+
+        const user = await AccountAdmin.findOne({
+            _id:id,
+            deleted:false
+        });
+
+        if (!user) {
+            return res.status(401).json({
+                message: "User not found"
+            });
+        }
+
+        return res.status(200).json({
+            data: user
+        });
+
+    } catch (err) {
+        return res.status(500).json({ message: "Lỗi server" });
+    }
+}
+
+module.exports.accountAdminCreate =async (req,res) =>{ 
+
+    const existAccount = await AccountAdmin.findOne({
+        email:req.body.email
+    })
+    if(req.file){
+        req.body.avatar = req.file.path
+    }
+    else{
+        delete req.body.avater
+    }
+    if(existAccount){
+        res.json({
+            code:"error",
+            message:"Email đã tồn tại trong hệ thống!"
+        })
+        return
+    }
+    const salt = bcrypt.genSaltSync(10);
+    const hash = bcrypt.hashSync(req.body.password, salt);
+    req.body.password = hash
+
+    const dataFinal = new AccountAdmin(req.body)
+    await dataFinal.save()
+    return res.status(200).json({
+        code:"success"
+    })
+}
+
+module.exports.accountAdminUpdate = async (req,res) =>{
+    try {
+        const id = req.params.id
+        if(req.file){
+            req.body.avatar = req.file.path
+        }
+        else{
+            delete req.body.avatar
+        }
+
+        if(req.body.password){
+            const salt = await bcrypt.genSalt(10)
+            const hash = await bcrypt.hash(req.body.password, salt)
+            req.body.password = hash
+        }
+        await AccountAdmin.updateOne({
+            _id:id
+        },req.body)
+        res.status(200).json({
+            code:"success"
+        })
+    } catch (error) {
+        res.json({
+            code:"error",
+            message:"Cập nhật tài khoản thất bại!"
+        })
+    }
+}
+
+module.exports.accountAdminDelete = async (req,res) =>{
+    try {
+        const id = req.params.id
+        await AccountAdmin.deleteOne({
+            _id:id
+        })
+        return res.status(200).json({
+            code:"success"
+        })
+    } catch (error) {
+        res.json({
+            code:"error",
+            message:"Xóa tài khoản thất bại!"
+        })
+    }
+}
