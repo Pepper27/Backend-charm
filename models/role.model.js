@@ -1,28 +1,28 @@
 const mongoose = require("mongoose")
-slug = require('mongoose-slug-updater')
+const slug = require('mongoose-slug-updater')
 mongoose.plugin(slug)
 const schema = new mongoose.Schema(
     {   
         name: String,
-        content: String,
-        avatar: String,
+        description: String,
+        permissions:Array,
         createdBy: String,
         updatedBy: String,
-        slug: {   
-            type: String, 
-            slug: "name",
-            unique: true
-        },
         deleted:{
             type: Boolean,
             default: false
         },
         deletedBy: String,
-        deletedAt: Date
+        deletedAt: Date,
+        slug: {   
+            type: String, 
+            slug: "name",
+            unique: true
+        }
     },
     {
         timestamps : true
     }
 )
-const New = mongoose.model("New",schema,"news")
-module.exports = New;
+const Role = mongoose.model("Role",schema,"roles")
+module.exports = Role;
