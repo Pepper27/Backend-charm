@@ -4,8 +4,9 @@ const dotenv= require("dotenv")
 dotenv.config()
 const { connectDB } = require("./config/database.js")
 const indexRouteAdmin  = require('./routes/admin/index.route.js')
+const indexRouteClient = require('./routes/client/index.route.js')
 const app = express()
-const port = process.env.PORT || 3899;
+const port = process.env.PORT || 3879;
 app.set("trust proxy", 1);
 
 // Connect to MongoDB before accepting requests.
@@ -64,6 +65,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use("/api/admin",indexRouteAdmin)
+app.use("/api/client",indexRouteClient)
 
 start().catch((err) => {
   console.error("Failed to start server", err);

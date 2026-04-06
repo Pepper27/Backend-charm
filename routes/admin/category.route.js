@@ -10,5 +10,5 @@ router.get("/",categoryController.getCategories);
 router.get("/parent",categoryController.getCategoriesParent);
 router.get("/:id",categoryController.getCategoryById)
 router.patch("/:id",upload.single('avatar'),categoryController.updateCategoryById)
-// router.delete("/:id",productController.deleteProduct)
+router.delete("/:id",categoryController.deleteCategoryById)
 module.exports = router
