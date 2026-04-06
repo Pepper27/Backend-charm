@@ -84,7 +84,10 @@ module.exports.getProducts = async (req,res)=>{
           console.log("[DEBUG] createdBy param:", creatorValue, "find.createdBy:", find.createdBy);
         }
         if (categoryId) {
-          find.category = categoryId;
+          if (mongoose.Types.ObjectId.isValid(categoryId)) {
+            find.category = new mongoose.Types.ObjectId(categoryId);
+          }
+          console.log('[DEBUG][CATEGORY] categoryId param:', categoryId, '| find.category:', find.category, '| type:', typeof find.category);
         }
         const products = await withTimeout(
           Product.find(find)
@@ -93,6 +96,7 @@ module.exports.getProducts = async (req,res)=>{
             .sort({ createdAt: -1 })
             .lean()
         );
+        console.log('[DEBUG][CATEGORY] Số sản phẩm tìm được:', products.length);
 
         let filtered = products;
         
