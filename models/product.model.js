@@ -23,8 +23,8 @@ const schema = new mongoose.Schema({
     },
     category: { type: Types.ObjectId, ref: "Category" },
     variants: [variantSchema],
-    createdBy: String,
-    updatedBy: String,
+    createdBy: { type: Types.ObjectId, ref: "AccountAdmin" },
+    updatedBy: { type: Types.ObjectId, ref: "AccountAdmin" },
     slug: {   
         type: String, 
         slug: "name",
@@ -34,7 +34,7 @@ const schema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
-    deletedBy: String,
+    deletedBy: { type: Types.ObjectId, ref: "AccountAdmin" },
     deletedAt: Date
 }, {
     timestamps: true
