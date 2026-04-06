@@ -15,7 +15,6 @@ const parseJsonField = (value, fallback) => {
 };
 module.exports.getProducts = async (req,res)=>{
     try {
-      console.log("1212")
         const find={
             deleted:false
         }
@@ -115,6 +114,7 @@ module.exports.createProduct = async (req, res) => {
 module.exports.getProductById = async (req, res) => {
   try {
     const id = req.params.id;
+
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         message: "Id không hợp lệ"
