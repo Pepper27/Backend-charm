@@ -4,6 +4,8 @@ const dotenv= require("dotenv")
 dotenv.config()
 const { connectDB } = require("./config/database.js")
 const indexRouteAdmin  = require('./routes/admin/index.route.js')
+const publicRoutes = require("./routes/public/index.route.js");
+const clientRoutes = require("./routes/client/index.route.js");
 const app = express()
 const port = process.env.PORT || 3879;
 app.set("trust proxy", 1);
@@ -64,6 +66,8 @@ app.use(cors({
   credentials: true,
 }));
 app.use("/api/admin",indexRouteAdmin)
+app.use("/api/public", publicRoutes);
+app.use("/api/client", clientRoutes);
 
 start().catch((err) => {
   console.error("Failed to start server", err);

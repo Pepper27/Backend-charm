@@ -5,6 +5,11 @@ const designItemSchema = new mongoose.Schema(
     slotIndex: Number,
     charmProductId: String,
     charmVariantCode: String,
+    // Client-side drag offset, normalized by canvas size.
+    offsetN: {
+      x: { type: Number, default: 0 },
+      y: { type: Number, default: 0 },
+    },
   },
   { _id: false }
 );
