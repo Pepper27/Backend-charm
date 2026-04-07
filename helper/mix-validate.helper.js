@@ -10,6 +10,18 @@ const findVariantByCode = (product, variantCode) => {
 
 const buildError = (field, message, meta) => ({ field, message, ...(meta ? { meta } : {}) });
 
+const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+// Offset is a client-only preview tweak; keep it bounded to avoid storing crazy values.
+const normalizeOffsetN = (offsetN) => {
+  const x = Number(offsetN?.x);
+  const y = Number(offsetN?.y);
+  return {
+    x: clamp(Number.isFinite(x) ? x : 0, -0.35, 0.35),
+    y: clamp(Number.isFinite(y) ? y : 0, -0.35, 0.35),
+  };
+};
+
 // Used by cart/design flows to ensure rule correctness and stable snapshots.
 const validateAndPrice = async ({ bracelet, items }) => {
   const errors = [];
@@ -228,6 +240,7 @@ const validateAndPrice = async ({ bracelet, items }) => {
       slotIndex: Number.parseInt(it.slotIndex, 10),
       charmProductId: String(it.charmProductId),
       charmVariantCode: String(it.charmVariantCode),
+      offsetN: normalizeOffsetN(it.offsetN),
     })),
   };
 };
