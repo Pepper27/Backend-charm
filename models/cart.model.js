@@ -36,9 +36,19 @@ const bundleSchema = new mongoose.Schema(
 const schema = new mongoose.Schema({
     userId:String,
     guestId:String,
+const { Types } = require("mongoose")
+const schema = new mongoose.Schema({
+    userId: {
+      type: Types.ObjectId,
+      ref: "AccountClient"
+    },
     products:[
         {
-            productId:String,
+            productId: {
+              type: Types.ObjectId,
+              ref: "Product"
+            },
+            variantId:String,
             quantity:Number,
             price:Number
         }
