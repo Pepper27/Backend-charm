@@ -18,7 +18,7 @@ module.exports.getCart = async (req, res) => {
 module.exports.addBundleToCart = async (req, res) => {
   try {
     const guestId = ensureGuestIdCookie(req, res);
-    const { bracelet, items } = req.body || {};
+    const { bracelet, items, name } = req.body || {};
 
     const result = await validateAndPrice({ bracelet, items });
     if (!result.valid) {
@@ -28,6 +28,7 @@ module.exports.addBundleToCart = async (req, res) => {
     const bundleId = crypto.randomUUID();
     const bundle = {
       bundleId,
+      name: typeof name === "string" ? name.trim() : "",
       bracelet: result.braceletSnapshot,
       items: result.itemsSnapshot,
       rulesSnapshot: {
@@ -37,6 +38,7 @@ module.exports.addBundleToCart = async (req, res) => {
       },
       priceSnapshot: result.pricing,
       quantity: 1,
+      createdAt: new Date(),
     };
 
     const cartKey = req.client?._id ? { userId: String(req.client._id) } : { guestId };

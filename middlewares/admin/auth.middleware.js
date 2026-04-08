@@ -5,11 +5,11 @@ const mongoose = require("mongoose");
 module.exports.verifyToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    const headerToken = authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
+    const headerToken = authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ").slice(1).join(" ").trim() : null;
     const cookieToken = req.cookies?.token;
-    const token = headerToken || cookieToken;
+    const token = (headerToken || cookieToken || "").trim();
 
-    if (!token) {
+    if (!token || token === "undefined" || token === "null") {
       return res.status(401).json({
         code: "error",
         message: "Token không tồn tại hoặc chưa gửi"
@@ -40,6 +40,12 @@ module.exports.verifyToken = async (req, res, next) => {
     next();
 
   } catch (error) {
+    if (error?.name === "TokenExpiredError") {
+      return res.status(401).json({
+        code: "error",
+        message: "Token hết hạn"
+      });
+    }
     return res.status(401).json({
       code: "error",
       message: "Token không hợp lệ"

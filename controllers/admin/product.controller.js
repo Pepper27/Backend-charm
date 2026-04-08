@@ -2,6 +2,7 @@ const Product = require("../../models/product.model");
 const AccountAdmin = require("../../models/accountAdmin.model");
 const helper = require("../../helper/generate.helper")
 const mongoose = require("mongoose");
+const slugify = require("slugify");
 
 const withTimeout = (query, ms = 8000) => {
   if (!query?.maxTimeMS) return query;
@@ -45,13 +46,22 @@ module.exports.getProducts = async (req,res)=>{
           const createdAtFilter = {};
           if (startDate) {
             const start = new Date(startDate);
+            if (Number.isNaN(start.getTime())) {
+              return res.status(400).json({ message: "startDate không hợp lệ" });
+            }
             start.setHours(0, 0, 0, 0);
             createdAtFilter.$gte = start;
           }
           if (endDate) {
             const end = new Date(endDate);
+            if (Number.isNaN(end.getTime())) {
+              return res.status(400).json({ message: "endDate không hợp lệ" });
+            }
             end.setHours(23, 59, 59, 999);
             createdAtFilter.$lte = end;
+          }
+          if (createdAtFilter.$gte && createdAtFilter.$lte && createdAtFilter.$gte > createdAtFilter.$lte) {
+            return res.status(400).json({ message: "startDate không được lớn hơn endDate" });
           }
           find.createdAt = createdAtFilter;
         }
@@ -80,15 +90,36 @@ module.exports.getProducts = async (req,res)=>{
             const creatorIds = creators.map((item) => item._id);
             find.createdBy = { $in: [...creatorIds, ...creatorIds.map((id) => id.toString())] };
           }
-          // Log giá trị param và điều kiện lọc
-          console.log("[DEBUG] createdBy param:", creatorValue, "find.createdBy:", find.createdBy);
         }
         if (categoryId) {
-          if (mongoose.Types.ObjectId.isValid(categoryId)) {
-            find.category = new mongoose.Types.ObjectId(categoryId);
+          const categoryValue = String(categoryId).trim();
+          if (!mongoose.Types.ObjectId.isValid(categoryValue)) {
+            return res.status(400).json({ message: "categoryId không hợp lệ" });
           }
-          console.log('[DEBUG][CATEGORY] categoryId param:', categoryId, '| find.category:', find.category, '| type:', typeof find.category);
+          find.category = new mongoose.Types.ObjectId(categoryValue);
         }
+
+        const keywordTrim = String(keyword || "").trim();
+        if (keywordTrim) {
+          const or = [];
+
+          // Match by id if user pastes ObjectId
+          if (mongoose.Types.ObjectId.isValid(keywordTrim)) {
+            or.push({ _id: new mongoose.Types.ObjectId(keywordTrim) });
+          }
+
+          // Match variant code (contains)
+          or.push({ "variants.code": { $regex: new RegExp(escapeRegex(keywordTrim), "i") } });
+
+          // Match name via slug (accent-insensitive)
+          const slugKeyword = slugify(keywordTrim, { lower: true, strict: true });
+          if (slugKeyword) {
+            or.push({ slug: { $regex: new RegExp(escapeRegex(slugKeyword), "i") } });
+          }
+
+          find.$or = or;
+        }
+
         const products = await withTimeout(
           Product.find(find)
             .populate({ path: "category", select: "name" })
@@ -96,25 +127,53 @@ module.exports.getProducts = async (req,res)=>{
             .sort({ createdAt: -1 })
             .lean()
         );
-        console.log('[DEBUG][CATEGORY] Số sản phẩm tìm được:', products.length);
 
         let filtered = products;
-        
-        // Filter by price range
+
+        // Filter by material and/or price range.
+        // If both are provided, they must match within the same variant.
         const hasMin = minPrice !== undefined && minPrice !== "";
         const hasMax = maxPrice !== undefined && maxPrice !== "";
-        if (hasMin || hasMax) {
-            const min = hasMin ? Number(minPrice) : 0;
-            const max = hasMax ? Number(maxPrice) : Infinity;
-            const safeMin = Number.isFinite(min) ? min : 0;
-            const safeMax = Number.isFinite(max) ? max : Infinity;
+        const hasPriceFilter = hasMin || hasMax;
+        const hasMaterialFilter = material !== undefined && material !== null && String(material).trim() !== "";
 
-            filtered = filtered.filter((p) =>
-              (p?.variants || []).some((v) => {
-                const price = Number(v?.price || 0);
-                return price >= safeMin && price <= safeMax;
-              })
-            );
+        const min = hasMin ? Number(minPrice) : 0;
+        const max = hasMax ? Number(maxPrice) : Infinity;
+        const safeMin = Number.isFinite(min) ? min : 0;
+        const safeMax = Number.isFinite(max) ? max : Infinity;
+
+        const normalizeText = (value) =>
+          String(value || "")
+            // Normalize for accent-insensitive comparisons.
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .replace(/[\u00A0]/g, " ")
+            .trim();
+
+        // Material key: ignore spaces/dashes to survive inconsistent formatting in stored data.
+        const materialKey = (value) => normalizeText(value).replace(/[^a-z0-9]+/g, "");
+        const targetMaterial = hasMaterialFilter ? materialKey(material) : "";
+
+        const parsePriceNumber = (value) => {
+          if (value === null || value === undefined || value === "") return 0;
+          if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+          // Accept inputs like "28.888", "28,888", "28 888", "28888₫".
+          const digits = String(value).replace(/\D+/g, "");
+          if (!digits) return 0;
+          const n = Number.parseInt(digits, 10);
+          return Number.isFinite(n) ? n : 0;
+        };
+
+        if (hasPriceFilter || hasMaterialFilter) {
+          filtered = filtered.filter((p) =>
+            (p?.variants || []).some((v) => {
+              const price = parsePriceNumber(v?.price);
+              const priceOk = !hasPriceFilter || (price >= safeMin && price <= safeMax);
+              const materialOk = !hasMaterialFilter || materialKey(v?.material) === targetMaterial;
+              return priceOk && materialOk;
+            })
+          );
         }
 
         // Filter by stock status
@@ -127,22 +186,6 @@ module.exports.getProducts = async (req,res)=>{
             else status = "in_stock";
             return status === stockStatus;
           });
-        }
-
-        // Filter by material
-        if (material) {
-          const normalizeText = (value) =>
-            String(value || "")
-              .normalize("NFD")
-              .replace(/[\u0300-\u036f]/g, "")
-              .toLowerCase()
-              .trim();
-          
-          filtered = filtered.filter((p) =>
-            (p?.variants || []).some((v) => 
-              normalizeText(v?.material) === normalizeText(material)
-            )
-          );
         }
 
         const total = filtered.length;
