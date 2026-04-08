@@ -12,9 +12,12 @@ module.exports.createOrder = async (req, res) => {
 
     const sanitizedCart = cart.map((item) => ({
       productId: item.productId || "",
-      variantId:item.variantId || "",
+      variantId: item.variantId || "",
       price: Number(item.price) || 0,
       quantity: Number(item.quantity) || 0,
+      // Optional snapshot fields; we'll fill from DB if missing.
+      name: String(item.name || "").trim(),
+      image: String(item.image || "").trim(),
     }));
 
     const totalPrice = sanitizedCart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -24,6 +27,7 @@ module.exports.createOrder = async (req, res) => {
     }
 
     const variantQuantities = {};
+    // Enrich items with product/variant snapshot data while validating stock.
     for (const item of sanitizedCart) {
       if (!item.variantId) {
         return res.status(400).json({ message: "Thiếu variantId trong giỏ hàng" });
@@ -57,6 +61,15 @@ module.exports.createOrder = async (req, res) => {
 
       variant.quantity -= requiredQuantity;
       productUpdates.push(product);
+
+      // Fill snapshot for items referencing this variant.
+      // This keeps admin order UI stable even if product later changes/deletes.
+      for (const item of sanitizedCart) {
+        if (item.variantId !== variantId) continue;
+        if (!item.productId) item.productId = product._id;
+        if (!item.name) item.name = product.name || "";
+        if (!item.image) item.image = (variant.images && variant.images[0]) || "";
+      }
     }
 
     for (const product of productUpdates) {

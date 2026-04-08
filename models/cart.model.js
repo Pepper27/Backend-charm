@@ -21,6 +21,8 @@ const bundleItemSchema = new mongoose.Schema(
 const bundleSchema = new mongoose.Schema(
   {
     bundleId: String,
+    // Optional display name for admin/customer listing.
+    name: { type: String, default: "" },
     bracelet: {
       productId: String,
       variantCode: String,
@@ -39,6 +41,8 @@ const bundleSchema = new mongoose.Schema(
       total: Number,
     },
     quantity: { type: Number, default: 1 },
+    // Bundle-level timestamp (cart.updatedAt is not precise per bundle).
+    createdAt: { type: Date, default: Date.now },
   },
   { _id: false }
 );
