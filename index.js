@@ -7,11 +7,9 @@ const indexRouteAdmin  = require('./routes/admin/index.route.js')
 const publicRoutes = require("./routes/public/index.route.js");
 const clientRoutes = require("./routes/client/index.route.js");
 const app = express()
-const port = process.env.PORT || 3879;
+const port = process.env.PORT || 3877;
 app.set("trust proxy", 1);
 
-// Connect to MongoDB before accepting requests.
-// This avoids requests hanging when the DB is unreachable.
 const start = async () => {
   await connectDB();
 
