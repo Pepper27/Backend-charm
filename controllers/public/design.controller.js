@@ -42,6 +42,7 @@ module.exports.saveDesignAndAddToCart = async (req, res) => {
     const bundleId = crypto.randomUUID();
     const bundle = {
       bundleId,
+      name: typeof name === "string" ? name.trim() : "",
       bracelet: result.braceletSnapshot,
       items: result.itemsSnapshot,
       rulesSnapshot: {
@@ -51,6 +52,7 @@ module.exports.saveDesignAndAddToCart = async (req, res) => {
       },
       priceSnapshot: result.pricing,
       quantity: 1,
+      createdAt: new Date(),
     };
 
     // Cart upsert.
@@ -66,33 +68,38 @@ module.exports.saveDesignAndAddToCart = async (req, res) => {
         { upsert: true, new: true }
       ).lean();
 
-      const design = await Design.create({
-        guestId,
-        userId: parsedUserId,
-        name: typeof name === "string" ? name.trim() : "",
-        bracelet: result.braceletSnapshot,
-        items: result.itemsSnapshot,
-        rulesSnapshot: {
+      // Per spec: we do not persist "My designs" for guest.
+      // Only persist a Design document when the user is authenticated / has userId.
+      let design = null;
+      if (parsedUserId) {
+        design = await Design.create({
+          guestId,
+          userId: parsedUserId,
+          name: typeof name === "string" ? name.trim() : "",
+          bracelet: result.braceletSnapshot,
+          items: result.itemsSnapshot,
+          rulesSnapshot: {
+            slotCount: result.slotCount,
+            recommendedCharms: result.recommendedCharms,
+            clipZonePercents: result.clipZonePercents,
+          },
+          priceSnapshot: result.pricing,
+          createdBundleId: bundleId,
+        });
+      }
+
+        return res.status(200).json({
+          valid: true,
+          errors: [],
           slotCount: result.slotCount,
           recommendedCharms: result.recommendedCharms,
+          clipZones: result.clipZones,
+          pricing: result.pricing,
           clipZonePercents: result.clipZonePercents,
-        },
-        priceSnapshot: result.pricing,
-        createdBundleId: bundleId,
-      });
-
-      return res.status(200).json({
-        valid: true,
-        errors: [],
-        slotCount: result.slotCount,
-        recommendedCharms: result.recommendedCharms,
-        clipZones: result.clipZones,
-        pricing: result.pricing,
-        clipZonePercents: result.clipZonePercents,
-        bundleId,
-        design,
-        cart,
-      });
+          bundleId,
+          design,
+          cart,
+        });
     } catch (error) {
       // Best-effort rollback: if design save fails after cart write.
       if (bundleId) {
