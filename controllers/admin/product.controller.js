@@ -1,5 +1,6 @@
 const Product = require("../../models/product.model");
 const AccountAdmin = require("../../models/accountAdmin.model");
+const Wishlist = require("../../models/wishlist.model");
 const helper = require("../../helper/generate.helper")
 const mongoose = require("mongoose");
 const slugify = require("slugify");
@@ -438,6 +439,10 @@ module.exports.deleteProduct = async (req, res) => {
     product.deletedBy = req.account?.id;
 
     await product.save();
+
+    // Product is soft-deleted (treated as inactive) -> remove related wishlist entries.
+    // This keeps wishlist stats and user lists consistent.
+    await Wishlist.deleteMany({ productId: new mongoose.Types.ObjectId(id) });
 
     return res.status(200).json({
       message: "Xóa sản phẩm thành công"

@@ -6,6 +6,7 @@ const roleRouter = require("./role.route")
 const designRouter = require("./design.route")
 const clientRouter = require("./client.route")
 const orderRouter = require("./order.route")
+const wishlistStatsRouter = require("./wishlist-stats.route")
 const authMiddleware = require("../../middlewares/admin/auth.middleware")
 router.use("/account",accountAdminRouter);
 router.use("/categories",authMiddleware.verifyToken,categoryRouter)
@@ -14,4 +15,5 @@ router.use("/roles",authMiddleware.verifyToken,roleRouter)
 router.use("/designs",authMiddleware.verifyToken,designRouter)
 router.use("/clients",authMiddleware.verifyToken,clientRouter)
 router.use("/order",authMiddleware.verifyToken,orderRouter)
+router.use("/wishlists", authMiddleware.verifyToken, wishlistStatsRouter)
 module.exports = router
