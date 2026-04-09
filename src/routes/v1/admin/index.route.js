@@ -16,6 +16,7 @@ const legacyDesigns = require("../../legacy/admin/design.route");
 const legacyClients = require("../../legacy/admin/client.route");
 const legacyOrders = require("../../legacy/admin/order.route");
 const legacyWishlistStats = require("../../legacy/admin/wishlist-stats.route");
+const legacyDashboard = require("../../legacy/admin/dashboard.route");
 
 router.use(requireAuth, requireRole("admin"));
 
@@ -27,5 +28,6 @@ router.use("/designs", legacyDesigns);
 router.use("/clients", legacyClients);
 router.use("/order", legacyOrders);
 router.use("/wishlists", legacyWishlistStats);
+router.use("/dashboard", legacyDashboard);
 
 module.exports = router;

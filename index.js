@@ -11,8 +11,6 @@ const app = express();
 const port = process.env.PORT || 3879;
 app.set("trust proxy", 1);
 
-// Connect to MongoDB before accepting requests.
-// This avoids requests hanging when the DB is unreachable.
 const start = async () => {
   await connectDB();
 
