@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const roleController = require("../../../controllers/admin/role.controller");
 router.get("/", roleController.getRoles);
+router.get("/all", roleController.getRolesAll);
 router.get("/:id", roleController.getRolesById);
 router.post("/", roleController.roleCreate);
 router.patch("/:id", roleController.roleUpdate);
