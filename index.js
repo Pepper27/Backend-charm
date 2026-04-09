@@ -1,12 +1,13 @@
-const express = require('express')
-const cors = require("cors")
-const dotenv= require("dotenv")
-dotenv.config()
-const { connectDB } = require("./config/database.js")
-const indexRouteAdmin  = require('./routes/admin/index.route.js')
-const publicRoutes = require("./routes/public/index.route.js");
-const clientRoutes = require("./routes/client/index.route.js");
-const app = express()
+const express = require("express");
+const cors = require("cors");
+const dotenv = require("dotenv");
+
+dotenv.config();
+
+const { connectDB } = require("./src/config/database.js");
+const apiRoutes = require("./src/routes/index.route.js");
+
+const app = express();
 const port = process.env.PORT || 3879;
 app.set("trust proxy", 1);
 
@@ -33,10 +34,7 @@ const isLocalOrigin = (origin) => {
   }
 };
 
-const allowedOrigins = new Set([
-  "http://localhost:3000",
-  "http://localhost:3001",
-]);
+const allowedOrigins = new Set(["http://localhost:3000", "http://localhost:3001"]);
 
 const isAllowedNgrokOrigin = (origin) => {
   if (!origin) return false;
@@ -48,26 +46,26 @@ const isAllowedNgrokOrigin = (origin) => {
     return false;
   }
 };
- 
-app.use(cors({
-  origin: function(origin, callback){
-    if (!origin) {
-      callback(null, true);
-      return;
-    }
-    if (isLocalOrigin(origin) || allowedOrigins.has(origin) || isAllowedNgrokOrigin(origin)){
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
-  credentials: true,
-}));
-app.use("/api/admin",indexRouteAdmin)
-app.use("/api/public", publicRoutes);
-app.use("/api/client", clientRoutes);
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (isLocalOrigin(origin) || allowedOrigins.has(origin) || isAllowedNgrokOrigin(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    methods: ["GET", "POST", "PATCH", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization", "ngrok-skip-browser-warning"],
+    credentials: true,
+  })
+);
+app.use("/api", apiRoutes);
 
 start().catch((err) => {
   console.error("Failed to start server", err);
