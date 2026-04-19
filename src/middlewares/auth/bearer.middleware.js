@@ -22,7 +22,8 @@ module.exports.requireAuth = (req, res, next) => {
     req.auth = {
       id: decoded?.id ? String(decoded.id) : null,
       email: decoded?.email ? String(decoded.email) : null,
-      role: decoded?.role ? String(decoded.role) : null,
+      // Backward compat: legacy client tokens didn't have role.
+      role: decoded?.role ? String(decoded.role) : decoded?.id ? "client" : null,
     };
     return next();
   } catch (error) {

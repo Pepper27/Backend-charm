@@ -17,11 +17,19 @@ const schema = new mongoose.Schema(
   {
     name: String,
     description: String,
-    options: {
-      materials: [String],
-      colors: [String],
-      sizes: [String],
-    },
+  options: {
+    materials: [String],
+    colors: [String],
+    sizes: [String],
+  },
+    // Faceted attributes as references for efficient filtering
+    materials: [{ type: Types.ObjectId, ref: "Material" }],
+    colors: [{ type: Types.ObjectId, ref: "Color" }],
+    sizes: [{ type: Types.ObjectId, ref: "Size" }],
+    themes: [{ type: Types.ObjectId, ref: "Theme" }],
+    // Precomputed price range for product (min/max across variants)
+    priceMin: { type: Number, default: 0 },
+    priceMax: { type: Number, default: 0 },
     category: { type: Types.ObjectId, ref: "Category" },
     // Pandora-style: a product can belong to multiple collections.
     collections: [{ type: Types.ObjectId, ref: "Collection" }],
@@ -47,3 +55,11 @@ const schema = new mongoose.Schema(
 
 const Product = mongoose.model("Product", schema, "product");
 module.exports = Product;
+
+// indexes for facets and price
+schema.index({ category: 1 });
+schema.index({ materials: 1 });
+schema.index({ colors: 1 });
+schema.index({ sizes: 1 });
+schema.index({ themes: 1 });
+schema.index({ priceMin: 1, priceMax: 1 });

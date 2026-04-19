@@ -11,8 +11,9 @@ module.exports.list = async (req, res) => {
       find.$or = [{ parent: "" }, { parent: null }, { parent: { $exists: false } }];
     }
 
+    // Include filter metadata so frontend can render category-specific filters
     const categories = await Category.find(find)
-      .select("name slug avatar parent position")
+      .select("name slug avatar banner parent position visibleFilters filterOptions filterConfig")
       .sort({ position: 1, createdAt: -1 })
       .lean();
 
