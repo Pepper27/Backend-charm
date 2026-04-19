@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const AccountAdmin = require("../../models/accountAdmin.model");
+const Role = require("../../models/role.model");
 const jwt = require("jsonwebtoken");
 const mailHelper = require("../../helper/mailer.helper");
 const randomOtp = require("../../helper/generate.helper");
@@ -218,7 +219,7 @@ module.exports.getName = async (req, res) => {
 
     const user = await AccountAdmin.findOne({
       _id: req.account.id,
-    });
+    }).lean();
 
     if (!user) {
       return res.status(401).json({
@@ -226,8 +227,20 @@ module.exports.getName = async (req, res) => {
       });
     }
 
+    let permissions = [];
+    if (user.role) {
+      const role = await Role.findOne({
+        _id: user.role,
+        deleted: false,
+      }).lean();
+      permissions = Array.isArray(role?.permissions) ? role.permissions : [];
+    }
+
     return res.status(200).json({
-      data: user,
+      data: {
+        ...user,
+        permissions,
+      },
     });
   } catch (err) {
     return res.status(500).json({ message: "Lỗi server" });
