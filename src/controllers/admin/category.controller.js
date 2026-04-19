@@ -22,7 +22,9 @@ module.exports.createPost = async (req, res) => {
         message: "Tên thể loại đã tồn tại!",
       });
     }
-    let avatar = req.file ? req.file.path : undefined;
+    // category.route uses upload.fields(), so files arrive in req.files
+    const avatar = req.files?.avatar?.[0]?.path;
+    const banner = req.files?.banner?.[0]?.path;
     let position = req.body.position;
     if (!position) {
       const positionCurrent = await Category.countDocuments({ deleted: false });
@@ -36,6 +38,7 @@ module.exports.createPost = async (req, res) => {
       name,
       description,
       avatar,
+      banner,
       position,
       createdBy,
       updatedBy,
@@ -155,12 +158,16 @@ module.exports.updateCategoryById = async (req, res) => {
       }
     }
     let avatar = old.avatar;
-    if (req.file) {
-      avatar = req.file.path;
-    }
+    const avatarFile = req.files?.avatar?.[0];
+    if (avatarFile) avatar = avatarFile.path;
+
+    let banner = old.banner;
+    const bannerFile = req.files?.banner?.[0];
+    if (bannerFile) banner = bannerFile.path;
     const updateData = {
       ...req.body,
       avatar,
+      banner,
       updatedBy: req.account?.id,
       updatedAt: Date.now(),
     };

@@ -4,6 +4,10 @@ const Wishlist = require("../../models/wishlist.model");
 const helper = require("../../helper/generate.helper");
 const mongoose = require("mongoose");
 const slugify = require("slugify");
+const Material = require("../../models/material.model");
+const Color = require("../../models/color.model");
+const Size = require("../../models/size.model");
+const Theme = require("../../models/theme.model");
 
 const withTimeout = (query, ms = 8000) => {
   if (!query?.maxTimeMS) return query;
@@ -318,6 +322,31 @@ module.exports.createProduct = async (req, res) => {
       createdBy: req.account?.id,
     });
 
+    // Resolve attribute references and compute price range
+    try {
+      if (materialsFromVariants.length) {
+        const mats = await Material.find({ name: { $in: materialsFromVariants }, deleted: false }).select("_id").lean();
+        product.materials = mats.map((m) => m._id);
+      }
+      const colorNames = [...new Set(newVariants.map((v) => v.color).filter(Boolean))];
+      if (colorNames.length) {
+        const cols = await Color.find({ name: { $in: colorNames }, deleted: false }).select("_id").lean();
+        product.colors = cols.map((c) => c._id);
+      }
+      const sizeNames = [...new Set(newVariants.map((v) => v.size).filter(Boolean))];
+      if (sizeNames.length) {
+        const sz = await Size.find({ name: { $in: sizeNames }, deleted: false }).select("_id").lean();
+        product.sizes = sz.map((s) => s._id);
+      }
+      const prices = newVariants.map((v) => Number(v.price) || 0);
+      if (prices.length) {
+        product.priceMin = Math.min(...prices);
+        product.priceMax = Math.max(...prices);
+      }
+    } catch (e) {
+      console.error("Warning: attribute mapping failed", e?.message || e);
+    }
+
     await product.save();
     await product.populate({ path: "createdBy", select: "_id fullName email" });
     const enriched = enrichProductWithStatus(product);
@@ -458,6 +487,31 @@ module.exports.updateProduct = async (req, res) => {
     };
     product.variants = newVariants;
     product.updatedBy = req.account?.id;
+
+    // resolve attribute references and compute price range for update
+    try {
+      if (materialsFromVariants.length) {
+        const mats = await Material.find({ name: { $in: materialsFromVariants }, deleted: false }).select("_id").lean();
+        product.materials = mats.map((m) => m._id);
+      }
+      const colorNames = [...new Set(newVariants.map((v) => v.color).filter(Boolean))];
+      if (colorNames.length) {
+        const cols = await Color.find({ name: { $in: colorNames }, deleted: false }).select("_id").lean();
+        product.colors = cols.map((c) => c._id);
+      }
+      const sizeNames = [...new Set(newVariants.map((v) => v.size).filter(Boolean))];
+      if (sizeNames.length) {
+        const sz = await Size.find({ name: { $in: sizeNames }, deleted: false }).select("_id").lean();
+        product.sizes = sz.map((s) => s._id);
+      }
+      const prices = newVariants.map((v) => Number(v.price) || 0);
+      if (prices.length) {
+        product.priceMin = Math.min(...prices);
+        product.priceMax = Math.max(...prices);
+      }
+    } catch (e) {
+      console.error("Warning: attribute mapping failed", e?.message || e);
+    }
 
     await product.save();
     await product.populate({ path: "createdBy", select: "_id fullName email" });
