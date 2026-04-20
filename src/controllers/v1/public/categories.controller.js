@@ -8,21 +8,32 @@ module.exports.list = async (req, res) => {
   try {
     const onlyRoot = String(req.query.root || "1").trim() !== "0";
 
-    const find = { deleted: false };
-    if (onlyRoot) {
-      find.$or = [{ parent: "" }, { parent: null }, { parent: { $exists: false } }];
-    }
+    let categories = [];
 
-    const categories = await Category.find(find)
-      .select("name slug avatar banner parent position visibleFilters filterOptions filterConfig")
-      .sort({ position: 1, createdAt: -1 })
-      .lean();
+    if (onlyRoot) {
+      const rootCategories = await Category.find({
+        deleted: false,
+        $or: [{ parent: "" }, { parent: null }, { parent: { $exists: false } }],
+      })
+        .select("name slug avatar banner parent position visibleFilters filterOptions filterConfig")
+        .lean();
+      const rootIds = rootCategories.map((c) => String(c._id));
+      const childCategories = await Category.find({
+        deleted: false,
+        parent: { $in: rootIds },
+      })
+        .select("name slug avatar banner parent position visibleFilters filterOptions filterConfig")
+        .lean();
+      categories = [...rootCategories, ...childCategories];
+    } else {
+      categories = await Category.find({ deleted: false })
+        .select("name slug avatar banner parent position visibleFilters filterOptions filterConfig")
+        .lean();
+    }
     const products = await Product.find({ deleted: false })
       .select("category collections")
       .lean();
-
     const mapCategoryCollections = {};
-
     for (const p of products) {
       const catId = String(p.category || "");
       if (!catId) continue;
@@ -44,6 +55,7 @@ module.exports.list = async (req, res) => {
     })
       .select("name slug")
       .lean();
+
     const collectionMap = {};
     collections.forEach((c) => {
       collectionMap[String(c._id)] = c;
@@ -58,7 +70,9 @@ module.exports.list = async (req, res) => {
           .filter(Boolean),
       };
     });
+
     return v1.ok(res, categoriesWithCollections || []);
+    console.log("categoriesWithCollections", categoriesWithCollections);
   } catch (error) {
     return v1.serverError(res, error);
   }
