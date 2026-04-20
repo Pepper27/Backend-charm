@@ -5,10 +5,24 @@ const cloudinaryHelper = require("../../../helper/cloudinary.helper");
 const upload = multer({
   storage: cloudinaryHelper.storage,
 });
-router.post("/", upload.single("avatar"), categoryController.createPost);
+router.post(
+  "/",
+  upload.fields([
+    { name: "avatar", maxCount: 1 },
+    { name: "banner", maxCount: 1 },
+  ]),
+  categoryController.createPost
+);
 router.get("/", categoryController.getCategories);
 router.get("/parent", categoryController.getCategoriesParent);
 router.get("/:id", categoryController.getCategoryById);
-router.patch("/:id", upload.single("avatar"), categoryController.updateCategoryById);
+router.patch(
+  "/:id",
+  upload.fields([
+    { name: "avatar", maxCount: 1 },
+    { name: "banner", maxCount: 1 },
+  ]),
+  categoryController.updateCategoryById
+);
 router.delete("/:id", categoryController.deleteCategoryById);
 module.exports = router;

@@ -1,5 +1,45 @@
 const mongoose = require("mongoose");
 const { Types } = require("mongoose");
+
+// Snapshot schemas for mix-charm bundle orders (bracelet + multiple charms).
+const orderBundleItemSchema = new mongoose.Schema(
+  {
+    slotIndex: Number,
+    charmProductId: String,
+    charmVariantCode: String,
+    offsetN: {
+      x: { type: Number, default: 0 },
+      y: { type: Number, default: 0 },
+    },
+  },
+  { _id: false }
+);
+
+const orderBundleSchema = new mongoose.Schema(
+  {
+    bundleId: String,
+    name: { type: String, default: "" },
+    bracelet: {
+      productId: String,
+      variantCode: String,
+      sizeCm: Number,
+      typeCode: String,
+    },
+    items: [orderBundleItemSchema],
+    rulesSnapshot: {
+      slotCount: Number,
+      recommendedCharms: Number,
+      clipZonePercents: [Number],
+    },
+    priceSnapshot: {
+      braceletPrice: Number,
+      charmsPrice: Number,
+      total: Number,
+    },
+    quantity: { type: Number, default: 1 },
+  },
+  { _id: false }
+);
 const orderItemSchema = new mongoose.Schema({
   productId: {
     type: Types.ObjectId,
@@ -17,8 +57,21 @@ const schema = new mongoose.Schema(
       type: Types.ObjectId,
       ref: "AccountClient",
     },
+    // For guest checkout and cross-device lookup.
+    guestId: { type: String, default: "" },
     orderCode: String,
+
+    // Contact snapshot at checkout time.
+    fullName: { type: String, default: "" },
+    email: { type: String, default: "" },
+    phone: String,
+    address: String,
+
+    // Flattened components for admin totals and sold counters.
     cart: [orderItemSchema],
+
+    // Bundle snapshots so admin can assemble the design.
+    bundles: [orderBundleSchema],
     totalPrice: Number,
     status: {
       type: String,
@@ -35,8 +88,6 @@ const schema = new mongoose.Schema(
       enum: ["unpaid", "paid"],
       default: "unpaid",
     },
-    address: String,
-    phone: String,
     updatedBy: String,
     deletedBy: String,
     deletedAt: Date,

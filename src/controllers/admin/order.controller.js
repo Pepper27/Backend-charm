@@ -53,7 +53,13 @@ module.exports.getOrders = async (req, res) => {
 
     if (keyword) {
       const rx = new RegExp(escapeRegex(keyword), "i");
-      find.$or = [{ orderCode: rx }, { phone: rx }, { address: rx }];
+      find.$or = [
+        { orderCode: rx },
+        { phone: rx },
+        { email: rx },
+        { fullName: rx },
+        { address: rx },
+      ];
     }
 
     const total = await Order.countDocuments(find);
@@ -66,7 +72,7 @@ module.exports.getOrders = async (req, res) => {
       .skip(skip)
       .limit(limit)
       .select(
-        "orderCode userId cart totalPrice status method payStatus address phone createdAt updatedAt"
+        "orderCode userId cart bundles fullName email totalPrice status method payStatus address phone createdAt updatedAt"
       )
       .populate({ path: "userId", select: "fullName email phone" })
       .lean();

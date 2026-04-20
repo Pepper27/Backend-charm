@@ -119,9 +119,14 @@ module.exports.login = async (req, res) => {
 
     await mergeGuestToUser({ guestId, userId: user._id });
 
-    const token = jwt.sign({ id: user._id, email: user.email }, process.env.JWT_SECRET, {
-      expiresIn: "1d",
-    });
+    // Include role so the same token can be used for v1 bearer endpoints.
+    const token = jwt.sign(
+      { id: user._id, email: user.email, role: "client" },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "1d",
+      }
+    );
     setClientTokenCookie(req, res, token);
 
     return res.status(200).json({

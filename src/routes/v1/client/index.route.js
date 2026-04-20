@@ -2,10 +2,12 @@ const router = require("express").Router();
 
 const { requireAuth, requireRole } = require("../../../middlewares/auth/bearer.middleware");
 
-// Reuse existing client routes but protect with bearer.
-const legacyClientOrder = require("../../legacy/client/order.route");
+const ordersController = require("../../../controllers/v1/client/orders.controller");
 
 router.use(requireAuth, requireRole("client"));
-router.use("/order", legacyClientOrder);
+
+router.get("/orders/stats", ordersController.stats);
+router.get("/orders", ordersController.list);
+router.get("/orders/:orderCode", ordersController.getByCode);
 
 module.exports = router;
