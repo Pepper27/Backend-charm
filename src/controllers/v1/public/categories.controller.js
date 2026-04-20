@@ -12,12 +12,7 @@ module.exports.list = async (req, res) => {
     if (onlyRoot) {
       find.$or = [{ parent: "" }, { parent: null }, { parent: { $exists: false } }];
     }
-<<<<<<< HEAD
-    
-=======
 
-    // Include filter metadata so frontend can render category-specific filters
->>>>>>> a1e493bb13dfc037fc8744bab7f7d60817fd7ea0
     const categories = await Category.find(find)
       .select("name slug avatar banner parent position visibleFilters filterOptions filterConfig")
       .sort({ position: 1, createdAt: -1 })
