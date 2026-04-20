@@ -13,7 +13,7 @@ module.exports.getCategories = async (req, res) => {
     }
 
     const categories = await Category.find(find)
-      .select("name slug avatar parent position")
+      .select("name slug avatar banner parent position visibleFilters filterOptions filterConfig")
       .sort({ position: 1, createdAt: -1 })
       .lean();
 

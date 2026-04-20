@@ -6,6 +6,7 @@ const designController = require("../../../controllers/public/design.controller"
 const authController = require("../../../controllers/public/auth.controller");
 const categoryController = require("../../../controllers/public/category.controller");
 const publicAuthMiddleware = require("../../../middlewares/public/auth.middleware");
+const checkoutController = require("../../../controllers/public/checkout.controller");
 const wishlistRouter = require("./wishlist.route");
 
 // Attach client identity when token is present.
@@ -17,6 +18,14 @@ router.get("/charms", catalogController.getCharms);
 router.get("/categories", categoryController.getCategories);
 
 router.post("/mix/validate", mixController.validateMix);
+
+// Bundle-centric checkout (guest + logged-in).
+router.post("/checkout", checkoutController.checkoutBundles);
+
+// Guest/client order tracking (by phone/email) and order detail.
+router.get("/orders/lookup", checkoutController.lookupOrders);
+router.get("/orders/:orderCode", checkoutController.getOrderByCode);
+router.post("/orders/email", checkoutController.emailOrders);
 
 router.get("/cart", cartController.getCart);
 router.post("/cart/bundles", cartController.addBundleToCart);

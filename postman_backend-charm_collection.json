@@ -1,0 +1,1026 @@
+{
+  "info": {
+    "name": "Backend-charm API",
+    "description": "Auto-generated Postman collection for Backend-charm. Base URL defaults to http://localhost:3879.\n\nAuth notes:\n- Legacy admin endpoints support cookie `token` or Bearer token (see /api/admin/account/login).\n- Legacy public client auth is cookie-based `clientToken` (set by /api/public/auth/login).\n- v1 admin/client endpoints require Bearer token from /api/v1/*/auth/login.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3879" },
+    { "key": "adminBearer", "value": "" },
+    { "key": "clientBearer", "value": "" },
+    { "key": "categoryId", "value": "" },
+    { "key": "productId", "value": "" },
+    { "key": "collectionId", "value": "" },
+    { "key": "orderId", "value": "" },
+    { "key": "designId", "value": "" },
+    { "key": "clientId", "value": "" },
+    { "key": "bundleId", "value": "" },
+    { "key": "wishlistProductId", "value": "" },
+    { "key": "productSlug", "value": "" },
+    { "key": "roleId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Legacy Public (/api/public)",
+      "item": [
+        {
+          "name": "Categories (root only)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "categories"]
+            }
+          }
+        },
+        {
+          "name": "Categories (all)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/categories?root=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "categories"],
+              "query": [{ "key": "root", "value": "0" }]
+            }
+          }
+        },
+        {
+          "name": "Bracelets",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/bracelets",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "bracelets"]
+            }
+          }
+        },
+        {
+          "name": "Charms",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/charms",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "charms"]
+            }
+          }
+        },
+        {
+          "name": "Mix Validate",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bracelet\": {\n    \"productId\": \"\",\n    \"variantCode\": \"\",\n    \"sizeCm\": 17\n  },\n  \"items\": [\n    {\n      \"slotIndex\": 0,\n      \"charmProductId\": \"\",\n      \"charmVariantCode\": \"\",\n      \"offsetN\": { \"x\": 0, \"y\": 0 }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/mix/validate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "mix", "validate"]
+            }
+          }
+        },
+        {
+          "name": "Cart Get",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/cart",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "cart"]
+            }
+          }
+        },
+        {
+          "name": "Cart Add Bundle",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"bracelet\": {\n    \"productId\": \"\",\n    \"variantCode\": \"\",\n    \"sizeCm\": 17\n  },\n  \"items\": [\n    {\n      \"slotIndex\": 0,\n      \"charmProductId\": \"\",\n      \"charmVariantCode\": \"\",\n      \"offsetN\": { \"x\": 0, \"y\": 0 }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/cart/bundles",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "cart", "bundles"]
+            }
+          }
+        },
+        {
+          "name": "Cart Patch Bundle",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"quantity\": 1\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/cart/bundles/{{bundleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "cart", "bundles", "{{bundleId}}"]
+            }
+          }
+        },
+        {
+          "name": "Cart Delete Bundle",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/cart/bundles/{{bundleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "cart", "bundles", "{{bundleId}}"]
+            }
+          }
+        },
+        {
+          "name": "Checkout (Bundles)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bundleIds\": [\"{{bundleId}}\"],\n  \"fullName\": \"Nguyen Van A\",\n  \"phone\": \"0900000000\",\n  \"address\": \"1 Vo Van Tan, Q3, HCM\",\n  \"email\": \"guest@example.com\",\n  \"method\": \"cash\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/checkout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "checkout"]
+            }
+          }
+        },
+        {
+          "name": "Orders Lookup (phone/email)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/orders/lookup?phone=0900000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "orders", "lookup"],
+              "query": [{ "key": "phone", "value": "0900000000" }]
+            }
+          }
+        },
+        {
+          "name": "Order Detail (by orderCode)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/orders/ORD...",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "orders", "ORD..."]
+            }
+          }
+        },
+        {
+          "name": "Designs List",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/designs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "designs"]
+            }
+          }
+        },
+        {
+          "name": "Designs Save (and add to cart)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"bracelet\": {\n    \"productId\": \"\",\n    \"variantCode\": \"\",\n    \"sizeCm\": 17\n  },\n  \"items\": [\n    {\n      \"slotIndex\": 0,\n      \"charmProductId\": \"\",\n      \"charmVariantCode\": \"\",\n      \"offsetN\": { \"x\": 0, \"y\": 0 }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/designs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "designs"]
+            }
+          }
+        },
+        {
+          "name": "Designs Delete",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/designs/{{designId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "designs", "{{designId}}"]
+            }
+          }
+        },
+        {
+          "name": "Auth Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"\",\n  \"email\": \"\",\n  \"password\": \"\",\n  \"phone\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Auth Login (cookie clientToken)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"\",\n  \"password\": \"\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Auth Me",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "auth", "me"]
+            }
+          }
+        },
+        {
+          "name": "Auth Logout",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "auth", "logout"]
+            }
+          }
+        },
+        {
+          "name": "Auth Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/auth/forgot-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "auth", "forgot-password"]
+            }
+          }
+        },
+        {
+          "name": "Auth Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"\",\n  \"otp\": \"\",\n  \"newPassword\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/auth/reset-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "auth", "reset-password"]
+            }
+          }
+        },
+        {
+          "name": "Wishlist List (requires client cookie)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/wishlist",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "wishlist"]
+            }
+          }
+        },
+        {
+          "name": "Wishlist Add (requires client cookie)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{wishlistProductId}}\",\n  \"variantCode\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/public/wishlist",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "wishlist"]
+            }
+          }
+        },
+        {
+          "name": "Wishlist Remove (requires client cookie)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/api/public/wishlist/{{wishlistProductId}}?variantCode=",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "public", "wishlist", "{{wishlistProductId}}"],
+              "query": [{ "key": "variantCode", "value": "" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Legacy Client (/api/client)",
+      "item": [
+        {
+          "name": "Create Order (legacy line-items)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"\",\n  \"cart\": [\n    {\n      \"productId\": \"\",\n      \"variantId\": \"\",\n      \"price\": 0,\n      \"quantity\": 1,\n      \"name\": \"\",\n      \"image\": \"\"\n    }\n  ],\n  \"method\": \"cash\",\n  \"address\": \"\",\n  \"phone\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/client/order",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "client", "order"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Legacy Admin (/api/admin)",
+      "item": [
+        {
+          "name": "Admin Login (legacy)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"\",\n  \"password\": \"\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/account/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "account", "login"]
+            }
+          }
+        },
+        {
+          "name": "Dashboard Summary (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Dashboard Inventory (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/dashboard/inventory",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "dashboard", "inventory"]
+            }
+          }
+        },
+        {
+          "name": "Dashboard Revenue Chart (requires admin auth)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminBearer}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"from\": \"\",\n  \"to\": \"\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/dashboard/revenueChart",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "dashboard", "revenueChart"]
+            }
+          }
+        },
+        {
+          "name": "Categories List (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "categories"]
+            }
+          }
+        },
+        {
+          "name": "Categories Tree (parent -> children) (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/categories/parent",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "categories", "parent"]
+            }
+          }
+        },
+        {
+          "name": "Categories Create (multipart, requires admin auth)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "", "type": "text" },
+                { "key": "description", "value": "", "type": "text" },
+                { "key": "parent", "value": "", "type": "text" },
+                { "key": "position", "value": "", "type": "text" },
+                { "key": "avatar", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "categories"]
+            }
+          }
+        },
+        {
+          "name": "Categories Get By Id (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/categories/{{categoryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "categories", "{{categoryId}}"]
+            }
+          }
+        },
+        {
+          "name": "Categories Update (multipart, requires admin auth)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "", "type": "text" },
+                { "key": "description", "value": "", "type": "text" },
+                { "key": "parent", "value": "", "type": "text" },
+                { "key": "position", "value": "", "type": "text" },
+                { "key": "avatar", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/categories/{{categoryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "categories", "{{categoryId}}"]
+            }
+          }
+        },
+        {
+          "name": "Categories Delete (requires admin auth)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/categories/{{categoryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "categories", "{{categoryId}}"]
+            }
+          }
+        },
+        {
+          "name": "Products List (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "products"]
+            }
+          }
+        },
+        {
+          "name": "Products Create (multipart, requires admin auth)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "", "type": "text" },
+                { "key": "description", "value": "", "type": "text" },
+                { "key": "category", "value": "", "type": "text" },
+                { "key": "variants", "value": "[]", "type": "text" },
+                { "key": "images", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "products"]
+            }
+          }
+        },
+        {
+          "name": "Products Get By Id (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "products", "{{productId}}"]
+            }
+          }
+        },
+        {
+          "name": "Products Update (multipart, requires admin auth)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "", "type": "text" },
+                { "key": "description", "value": "", "type": "text" },
+                { "key": "category", "value": "", "type": "text" },
+                { "key": "variants", "value": "[]", "type": "text" },
+                { "key": "images", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "products", "{{productId}}"]
+            }
+          }
+        },
+        {
+          "name": "Products Delete (requires admin auth)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "products", "{{productId}}"]
+            }
+          }
+        },
+        {
+          "name": "Collections List (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/collections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "collections"]
+            }
+          }
+        },
+        {
+          "name": "Collections Create (multipart, requires admin auth)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "", "type": "text" },
+                { "key": "description", "value": "", "type": "text" },
+                { "key": "avatar", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/collections",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "collections"]
+            }
+          }
+        },
+        {
+          "name": "Collections Get By Id (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/collections/{{collectionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "collections", "{{collectionId}}"]
+            }
+          }
+        },
+        {
+          "name": "Collections Update (multipart, requires admin auth)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "name", "value": "", "type": "text" },
+                { "key": "description", "value": "", "type": "text" },
+                { "key": "avatar", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/collections/{{collectionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "collections", "{{collectionId}}"]
+            }
+          }
+        },
+        {
+          "name": "Collections Delete (requires admin auth)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/collections/{{collectionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "collections", "{{collectionId}}"]
+            }
+          }
+        },
+        {
+          "name": "Roles List (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/roles",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "roles"]
+            }
+          }
+        },
+        {
+          "name": "Roles Create (requires admin auth)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminBearer}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"\",\n  \"permissions\": []\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/roles",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "roles"]
+            }
+          }
+        },
+        {
+          "name": "Roles Update (requires admin auth)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminBearer}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/roles/{{roleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "roles", "{{roleId}}"]
+            }
+          }
+        },
+        {
+          "name": "Roles Delete (requires admin auth)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/roles/{{roleId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "roles", "{{roleId}}"]
+            }
+          }
+        },
+        {
+          "name": "Designs List (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/designs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "designs"]
+            }
+          }
+        },
+        {
+          "name": "Designs Get By Id (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/designs/{{designId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "designs", "{{designId}}"]
+            }
+          }
+        },
+        {
+          "name": "Designs Delete (requires admin auth)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/designs/{{designId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "designs", "{{designId}}"]
+            }
+          }
+        },
+        {
+          "name": "Clients List (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/clients",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "clients"]
+            }
+          }
+        },
+        {
+          "name": "Clients Get By Id (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/clients/{{clientId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "clients", "{{clientId}}"]
+            }
+          }
+        },
+        {
+          "name": "Clients Delete (requires admin auth)",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/clients/{{clientId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "clients", "{{clientId}}"]
+            }
+          }
+        },
+        {
+          "name": "Orders List (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/order",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "order"]
+            }
+          }
+        },
+        {
+          "name": "Orders Get By Id (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/order/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "order", "{{orderId}}"]
+            }
+          }
+        },
+        {
+          "name": "Orders Update (requires admin auth)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminBearer}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"confirmed\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/order/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "order", "{{orderId}}"]
+            }
+          }
+        },
+        {
+          "name": "Wishlist Stats By Product (requires admin auth)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/wishlists/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "wishlists", "products"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "v1 Public (/api/v1/public)",
+      "item": [
+        {
+          "name": "Categories (root only)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "public", "categories"]
+            }
+          }
+        },
+        {
+          "name": "Categories (all)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/categories?root=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "public", "categories"],
+              "query": [{ "key": "root", "value": "0" }]
+            }
+          }
+        },
+        {
+          "name": "Products List",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/products?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "public", "products"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "q", "value": "" },
+                { "key": "categorySlug", "value": "" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Product Get By Id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/products/{{productId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "public", "products", "{{productId}}"]
+            }
+          }
+        },
+        {
+          "name": "Product Get By Slug",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/products/slug/{{productSlug}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "public", "products", "slug", "{{productSlug}}"]
+            }
+          }
+        },
+        {
+          "name": "Client v1 Login (bearer)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"\",\n  \"password\": \"\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "public", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Client v1 Me (bearer)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{clientBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/public/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "public", "auth", "me"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "v1 Admin (/api/v1/admin)",
+      "item": [
+        {
+          "name": "Admin v1 Login (bearer)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"\",\n  \"password\": \"\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Dashboard Summary (bearer)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Categories List (bearer)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "categories"]
+            }
+          }
+        },
+        {
+          "name": "Categories Tree (parent -> children) (bearer)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/categories/parent",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "categories", "parent"]
+            }
+          }
+        },
+        {
+          "name": "Products List (bearer)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminBearer}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "products"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "v1 Client (/api/v1/client)",
+      "item": [
+        {
+          "name": "Create Order (bearer, legacy handler)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{clientBearer}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"\",\n  \"cart\": [\n    {\n      \"productId\": \"\",\n      \"variantId\": \"\",\n      \"price\": 0,\n      \"quantity\": 1\n    }\n  ],\n  \"method\": \"cash\",\n  \"address\": \"\",\n  \"phone\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/client/order",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "client", "order"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
