@@ -305,22 +305,34 @@ module.exports.createProduct = async (req, res) => {
       ...new Set(newVariants.map((variant) => variant.material).filter(Boolean)),
     ];
 
+    // ... bên trong hàm createProduct ...
+
+    // 1. Lấy danh sách thực tế từ các biến thể còn lại
+    const finalMaterials = [...new Set(variants.map(v => v.material).filter(Boolean))];
+    const finalColors = [...new Set(variants.map(v => v.color).filter(Boolean))];
+    const finalSizes = [...new Set(variants.map(v => v.size).filter(Boolean))];
+
     const product = new Product({
       name,
       description,
       category,
-      collections: Array.isArray(collections)
-        ? collections
-            .filter((value) => mongoose.Types.ObjectId.isValid(value))
-            .map((value) => new mongoose.Types.ObjectId(value))
-        : undefined,
+      collections: Array.isArray(collections) ? collections : undefined,
       options: {
-        ...options,
-        materials: materialsFromVariants,
+        // Thay vì dùng options từ req.body, ta dùng dữ liệu thực tế từ variants
+        materials: finalMaterials,
+        colors: finalColors,
+        sizes: finalSizes
       },
       variants: newVariants,
       createdBy: req.account?.id,
     });
+
+    // Sau đó dùng các mảng final này để map ID như bạn đã làm
+    if (finalMaterials.length) {
+      const mats = await Material.find({ name: { $in: finalMaterials }, deleted: false }).select("_id").lean();
+      product.materials = mats.map((m) => m._id);
+    }
+    // Tương tự cho colors và sizes...
 
     // Resolve attribute references and compute price range
     try {
