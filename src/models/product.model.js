@@ -17,16 +17,16 @@ const schema = new mongoose.Schema(
   {
     name: String,
     description: String,
-  options: {
+    options: {
     materials: [String],
     colors: [String],
     sizes: [String],
   },
     // Faceted attributes as references for efficient filtering
-    materials: [{ type: Types.ObjectId, ref: "Material" }],
-    colors: [{ type: Types.ObjectId, ref: "Color" }],
-    sizes: [{ type: Types.ObjectId, ref: "Size" }],
-    themes: [{ type: Types.ObjectId, ref: "Theme" }],
+    // materials: [{ type: Types.ObjectId, ref: "Material" }],
+    // colors: [{ type: Types.ObjectId, ref: "Color" }],
+    // sizes: [{ type: Types.ObjectId, ref: "Size" }],
+    // themes: [{ type: Types.ObjectId, ref: "Theme" }],
     // Precomputed price range for product (min/max across variants)
     priceMin: { type: Number, default: 0 },
     priceMax: { type: Number, default: 0 },
