@@ -53,7 +53,7 @@ const parseJsonField = (value, fallback) => {
 module.exports.list = async (req, res) => {
   try {
     const page = Math.max(parseIntSafe(req.query.page, 1), 1);
-    const limit = Math.min(Math.max(parseIntSafe(req.query.limit, 12), 1), 50);
+    const limit = Math.min(Math.max(parseIntSafe(req.query.limit, 24), 1), 100);
     const skip = (page - 1) * limit;
 
     const q = String(req.query.q || "").trim();
@@ -116,15 +116,34 @@ module.exports.list = async (req, res) => {
     const priceRaw = filters.price || {};
     const priceMinReq = priceRaw.min !== undefined ? Number(priceRaw.min) : undefined;
     const priceMaxReq = priceRaw.max !== undefined ? Number(priceRaw.max) : undefined;
-    if (!Number.isNaN(priceMinReq) && !Number.isNaN(priceMinReq)) {
+    if (!Number.isNaN(priceMinReq) && priceMinReq !== undefined) {
       // Ensure priceMax >= requested min
       match.priceMax = match.priceMax || {};
       match.priceMax.$gte = priceMinReq;
     }
-    if (!Number.isNaN(priceMaxReq) && !Number.isNaN(priceMaxReq)) {
+    if (!Number.isNaN(priceMaxReq) && priceMaxReq !== undefined) {
       // Ensure priceMin <= requested max
       match.priceMin = match.priceMin || {};
       match.priceMin.$lte = priceMaxReq;
+    }
+
+    // Handle products with zero/null prices when price filtering is applied
+    if (match.priceMax || match.priceMin) {
+      // Include products with zero/null prices in price filtering
+      match.$or = [
+        { priceMin: { $exists: true, $ne: null, $ne: 0 }, priceMax: { $exists: true, $ne: null, $ne: 0 } },
+        { priceMin: { $exists: false }, priceMax: { $exists: false } },
+        { priceMin: 0, priceMax: 0 }
+      ];
+      // Apply the price filters to the first condition only
+      if (match.priceMax) {
+        match.$or[0].priceMax = match.priceMax;
+        delete match.priceMax;
+      }
+      if (match.priceMin) {
+        match.$or[0].priceMin = match.priceMin;
+        delete match.priceMin;
+      }
     }
 
     // category is stored as ObjectId in schema, but some older data might be string.
@@ -140,7 +159,14 @@ module.exports.list = async (req, res) => {
         },
       },
       { $unwind: { path: "$categoryDoc", preserveNullAndEmptyArrays: true } },
-      ...(categoryIds ? [{ $match: { "categoryDoc._id": { $in: categoryIds } } }] : []),
+      ...(categoryIds ? [{ 
+        $match: { 
+          $or: [
+            { "categoryDoc._id": { $in: categoryIds } },  // Products with valid categories
+            { categoryDoc: { $exists: false } }            // Products without categories
+          ]
+        } 
+      }] : []),
       { $sort: { createdAt: -1 } },
       {
         $facet: {
