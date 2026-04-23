@@ -32,7 +32,7 @@ const isLocalOrigin = (origin) => {
   }
 };
 
-const allowedOrigins = new Set(["http://localhost:3000", "http://localhost:3001"]);
+const allowedOrigins = new Set(["http://localhost:3000", "http://localhost:3002"]);
 
 const isAllowedNgrokOrigin = (origin) => {
   if (!origin) return false;
