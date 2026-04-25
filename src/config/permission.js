@@ -153,4 +153,16 @@ module.exports.permission = [
         lable:"Xóa sự kiện",
         value:"event-delete"
     },
+    {
+        lable:"Quản lý Kích thước",
+        value:"size-management"
+    },
+    {
+        lable:"Quản lý Màu sắc",
+        value:"color-management"
+    },
+    {
+        lable:"Quản lý Chất liệu",
+        value:"material-management"
+    },
 ]
