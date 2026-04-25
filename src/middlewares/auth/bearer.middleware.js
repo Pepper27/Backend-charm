@@ -1,40 +1,111 @@
-const jwt = require("jsonwebtoken");
-const v1 = require("../../helper/v1-response.helper");
+const jwt = require('jsonwebtoken');
+const AccountAdmin = require('../../models/accountAdmin.model');
+const AccountClient = require('../../models/accountClient.model');
 
-const extractBearerToken = (req) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return null;
-  const [scheme, token] = String(authHeader).split(" ");
-  if (scheme !== "Bearer") return null;
-  return (token || "").trim() || null;
-};
-
-// Verifies JWT from Authorization header.
-// Attaches req.auth = { id, email, role }.
-module.exports.requireAuth = (req, res, next) => {
+/**
+ * Authentication middleware for v1 routes
+ */
+const requireAuth = async (req, res, next) => {
   try {
-    const token = extractBearerToken(req);
-    if (!token) {
-      return v1.fail(res, 401, "UNAUTHORIZED", "Missing Bearer token");
+    // Get token from header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'authentication_required', 
+        message: 'Authentication required' 
+      });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.auth = {
-      id: decoded?.id ? String(decoded.id) : null,
-      email: decoded?.email ? String(decoded.email) : null,
-      // Backward compat: legacy client tokens didn't have role.
-      role: decoded?.role ? String(decoded.role) : decoded?.id ? "client" : null,
-    };
-    return next();
+    const token = authHeader.split(' ')[1];
+
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default-secret');
+
+    // If token contains role, verify against corresponding model
+    const roleFromToken = decoded.role || decoded.roles || null;
+    if (roleFromToken === 'admin') {
+      const admin = await AccountAdmin.findOne({ _id: decoded.id, deleted: false });
+      if (!admin) {
+        return res.status(401).json({ success: false, error: 'user_not_found', message: 'Admin not found' });
+      }
+      if (admin.status === 'initial') {
+        return res.status(401).json({ success: false, error: 'user_inactive', message: 'Admin not approved' });
+      }
+      req.auth = { id: admin._id, email: admin.email, role: 'admin' };
+    } else if (roleFromToken === 'client') {
+      const client = await AccountClient.findOne({ _id: decoded.id, deleted: false });
+      if (!client) {
+        return res.status(401).json({ success: false, error: 'user_not_found', message: 'Client not found' });
+      }
+      req.auth = { id: client._id, email: client.email, role: 'client' };
+    } else {
+      // Fallback: accept token if valid and attach basic info
+      req.auth = { id: decoded.id || decoded.userId, email: decoded.email, role: roleFromToken || 'user' };
+    }
+    
+    next();
   } catch (error) {
-    const code = error?.name === "TokenExpiredError" ? "TOKEN_EXPIRED" : "INVALID_TOKEN";
-    return v1.fail(res, 401, code, "Invalid token");
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'invalid_token', 
+        message: 'Invalid token' 
+      });
+    }
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'token_expired', 
+        message: 'Token expired' 
+      });
+    }
+
+    console.error('Authentication error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'internal_error', 
+      message: 'Internal server error' 
+    });
   }
 };
 
-module.exports.requireRole = (role) => (req, res, next) => {
-  if (!req.auth?.role || req.auth.role !== role) {
-    return v1.fail(res, 403, "FORBIDDEN", "Forbidden");
-  }
-  return next();
+/**
+ * Role-based authorization middleware for v1 routes
+ */
+const requireRole = (role) => {
+  return (req, res, next) => {
+    try {
+      if (!req.auth) {
+        return res.status(401).json({ 
+          success: false, 
+          error: 'authentication_required', 
+          message: 'Authentication required' 
+        });
+      }
+
+      if (req.auth.role !== role) {
+        return res.status(403).json({ 
+          success: false, 
+          error: 'insufficient_permissions', 
+          message: 'Insufficient permissions' 
+        });
+      }
+
+      next();
+    } catch (error) {
+      console.error('Authorization error:', error);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'internal_error', 
+        message: 'Internal server error' 
+      });
+    }
+  };
+};
+
+module.exports = {
+  requireAuth,
+  requireRole
 };
