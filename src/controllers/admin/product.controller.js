@@ -8,6 +8,7 @@ const Material = require("../../models/material.model");
 const Color = require("../../models/color.model");
 const Size = require("../../models/size.model");
 const Theme = require("../../models/theme.model");
+const { getAggregatedFilters } = require("../../helper/aggregation-filters.helper");
 
 const withTimeout = (query, ms = 8000) => {
   if (!query?.maxTimeMS) return query;
@@ -240,12 +241,17 @@ module.exports.getProducts = async (req, res) => {
       stockStatus: calculateStockStatus(p),
     }));
 
+    // Get aggregated filters
+    const categorySlug = req.query.categorySlug || "";
+    const aggregatedFilters = await getAggregatedFilters(categorySlug);
+
     return res.status(200).json({
       data: enrichedProducts,
       total,
       currentPage: safePage,
       totalPage,
       limit,
+      filters: aggregatedFilters,
     });
   } catch (error) {
     return res.status(500).json({
