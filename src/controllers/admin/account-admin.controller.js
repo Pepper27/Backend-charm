@@ -233,7 +233,17 @@ module.exports.getName = async (req, res) => {
         _id: user.role,
         deleted: false,
       }).lean();
-      permissions = Array.isArray(role?.permissions) ? role.permissions : [];
+      if (Array.isArray(role?.permissions)) {
+        permissions = role.permissions.map((p) => {
+          if (!p && p !== "") return p;
+          // If permission stored as string, keep it.
+          if (typeof p === "string") return p;
+          // If stored as object, try common keys: value, name, label, lable
+          return p.value || p.name || p.label || p.lable || null;
+        }).filter(Boolean);
+      } else {
+        permissions = [];
+      }
     }
 
     return res.status(200).json({
