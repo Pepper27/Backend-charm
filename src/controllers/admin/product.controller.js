@@ -8,7 +8,6 @@ const Material = require("../../models/material.model");
 const Color = require("../../models/color.model");
 const Size = require("../../models/size.model");
 const Theme = require("../../models/theme.model");
-const { getAggregatedFilters } = require("../../helper/aggregation-filters.helper");
 
 const withTimeout = (query, ms = 8000) => {
   if (!query?.maxTimeMS) return query;
@@ -241,17 +240,12 @@ module.exports.getProducts = async (req, res) => {
       stockStatus: calculateStockStatus(p),
     }));
 
-    // Get aggregated filters
-    const categorySlug = req.query.categorySlug || "";
-    const aggregatedFilters = await getAggregatedFilters(categorySlug);
-
     return res.status(200).json({
       data: enrichedProducts,
       total,
       currentPage: safePage,
       totalPage,
       limit,
-      filters: aggregatedFilters,
     });
   } catch (error) {
     return res.status(500).json({
@@ -311,6 +305,9 @@ module.exports.createProduct = async (req, res) => {
       ...new Set(newVariants.map((variant) => variant.material).filter(Boolean)),
     ];
 
+    // ... bên trong hàm createProduct ...
+
+    // 1. Lấy danh sách thực tế từ các biến thể còn lại
     const finalMaterials = [...new Set(variants.map(v => v.material).filter(Boolean))];
     const finalColors = [...new Set(variants.map(v => v.color).filter(Boolean))];
     const finalSizes = [...new Set(variants.map(v => v.size).filter(Boolean))];
@@ -321,7 +318,7 @@ module.exports.createProduct = async (req, res) => {
       category,
       collections: Array.isArray(collections) ? collections : undefined,
       options: {
-  
+        // Thay vì dùng options từ req.body, ta dùng dữ liệu thực tế từ variants
         materials: finalMaterials,
         colors: finalColors,
         sizes: finalSizes
@@ -330,12 +327,14 @@ module.exports.createProduct = async (req, res) => {
       createdBy: req.account?.id,
     });
 
-
+    // Sau đó dùng các mảng final này để map ID như bạn đã làm
     if (finalMaterials.length) {
       const mats = await Material.find({ name: { $in: finalMaterials }, deleted: false }).select("_id").lean();
       product.materials = mats.map((m) => m._id);
     }
+    // Tương tự cho colors và sizes...
 
+    // Resolve attribute references and compute price range
     try {
       if (materialsFromVariants.length) {
         const mats = await Material.find({ name: { $in: materialsFromVariants }, deleted: false }).select("_id").lean();

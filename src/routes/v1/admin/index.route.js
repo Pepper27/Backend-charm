@@ -17,6 +17,10 @@ const legacyClients = require("../../legacy/admin/client.route");
 const legacyOrders = require("../../legacy/admin/order.route");
 const legacyWishlistStats = require("../../legacy/admin/wishlist-stats.route");
 const legacyDashboard = require("../../legacy/admin/dashboard.route");
+// Thêm vào cùng nhóm với legacyCategories, legacyProducts...
+const legacyMaterials = require("../../legacy/admin/material.route");
+const legacyColors = require("../../legacy/admin/color.route");
+const legacySizes = require("../../legacy/admin/size.route");
 
 router.use(requireAuth, requireRole("admin"));
 
@@ -29,5 +33,9 @@ router.use("/clients", legacyClients);
 router.use("/order", legacyOrders);
 router.use("/wishlists", legacyWishlistStats);
 router.use("/dashboard", legacyDashboard);
+router.use("/materials", legacyMaterials);
+router.use("/colors", legacyColors);
+router.use("/sizes", legacySizes);
+
 
 module.exports = router;
