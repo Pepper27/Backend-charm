@@ -5,6 +5,7 @@ const Category = require("../../../models/category.model");
 const { parseIntSafe } = require("../../../helper/number.helper");
 const { escapeRegex } = require("../../../helper/escape-regex.helper");
 const v1 = require("../../../helper/v1-response.helper");
+const { getAggregatedFilters } = require("../../../helper/aggregation-filters.helper");
 
 // Collects all descendant category ids (including rootId itself).
 // Category.parent is stored as a stringified ObjectId in this codebase.
@@ -100,14 +101,40 @@ module.exports.list = async (req, res) => {
         .filter((v) => mongoose.Types.ObjectId.isValid(v))
         .map((v) => new mongoose.Types.ObjectId(v));
 
-    // facet keys we support
-    const facetKeys = ["materials", "colors", "sizes", "themes", "collections"];
+    // facet keys we support (only themes and collections use ObjectId references)
+    const facetKeys = ["themes", "collections"];
     for (const key of facetKeys) {
       const vals = toIdArray(filters[key]);
       const ids = tryToObjectIds(vals);
       if (ids.length) {
         // product stores these as arrays of ObjectId
         match[key] = { $in: ids };
+      }
+    }
+
+    // Handle materials, colors, and sizes (string values in options and variants)
+    const stringFacetKeys = ["materials", "colors", "sizes"];
+    for (const key of stringFacetKeys) {
+      const vals = toIdArray(filters[key]);
+      if (vals.length > 0) {
+        // Convert to string values
+        const stringValues = vals.map(String).filter(Boolean);
+        
+        if (stringValues.length > 0) {
+          // Match in options array (e.g., "options.materials")
+          const optionsPath = `options.${key.slice(0, -1)}`; // "materials" -> "options.material"
+          
+          // Match in variants (e.g., "variants.material")
+          const variantPath = `variants.${key.slice(0, -1)}`; // "materials" -> "variants.material"
+          
+          // Add to existing $or array or create new one
+          if (!match.$or) match.$or = [];
+          
+          match.$or.push(
+            { [optionsPath]: { $in: stringValues } },
+            { [variantPath]: { $in: stringValues } }
+          );
+        }
       }
     }
 
@@ -197,7 +224,14 @@ module.exports.list = async (req, res) => {
     const total = result?.totalCount?.[0]?.count || 0;
     const totalPages = Math.max(Math.ceil(total / limit), 1);
 
-    return v1.ok(res, rows, { page, limit, total, totalPages });
+    // Get aggregated filters
+    const aggregatedFilters = await getAggregatedFilters(categorySlug);
+
+    // Return response with filters
+    return v1.ok(res, rows, { 
+      meta: { page, limit, total, totalPages },
+      filters: aggregatedFilters
+    });
   } catch (error) {
     return v1.serverError(res, error);
   }
