@@ -8,7 +8,7 @@ const { connectDB } = require("./src/config/database.js");
 const apiRoutes = require("./src/routes/index.route.js");
 
 const app = express();
-const port = process.env.PORT || 3866;
+const port = process.env.PORT || 3861;
 app.set("trust proxy", 1);
 
 const start = async () => {
