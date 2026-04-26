@@ -4,7 +4,8 @@ mongoose.plugin(slug);
 const schema = new mongoose.Schema(
   {
     name: String,
-    avatar: String,
+    codeColor: String,
+    codeHex: String,
     createdBy: String,
     updatedBy: String,
     deletedBy: String,
@@ -18,6 +19,10 @@ const schema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isActive:{
+      type: Boolean,
+      default: false,
+    }
   },
   {
     timestamps: true,
