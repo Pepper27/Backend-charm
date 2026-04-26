@@ -224,14 +224,71 @@ module.exports.list = async (req, res) => {
     const total = result?.totalCount?.[0]?.count || 0;
     const totalPages = Math.max(Math.ceil(total / limit), 1);
 
-    // Get aggregated filters
-    const aggregatedFilters = await getAggregatedFilters(categorySlug);
+    // If client requested includeFilters=true, compute facet counts based on current match
+    const includeFilters = String(req.query.includeFilters || '').toLowerCase() === 'true';
+    let aggregatedFilters = null;
+    if (includeFilters) {
+      // Build a match object that mirrors the filters applied above so facet counts are faceted
+      const facetMatch = { deleted: false };
 
-    // Return response with filters
-    return v1.ok(res, rows, { 
-      meta: { page, limit, total, totalPages },
-      filters: aggregatedFilters
-    });
+      // Add text query if present
+      if (q) facetMatch.$or = [{ name: new RegExp(escapeRegex(q), 'i') }, { slug: new RegExp(escapeRegex(q), 'i') }];
+
+      // category scope
+      if (categoryIds) facetMatch.category = { $in: categoryIds };
+
+      // Accept CSV params for sizes/colors/materials/inStock/priceRanges if provided (legacy support)
+      const toArray = (val) => {
+        if (!val) return [];
+        if (Array.isArray(val)) return val.map(String);
+        return String(val).split(',').map((s) => s.trim()).filter(Boolean);
+      };
+
+      const sizesCsv = toArray(req.query.sizes || filters.sizes);
+      const colorsCsv = toArray(req.query.colors || filters.colors);
+      const materialsCsv = toArray(req.query.materials || filters.materials || filters.materials);
+      const inStockCsv = toArray(req.query.inStock || filters.inStock);
+      const priceRangesCsv = toArray(req.query.priceRanges || filters.priceRanges);
+
+      // apply materials/colors/sizes filters into facetMatch similar to above logic
+      if (materialsCsv.length) {
+        facetMatch.$or = facetMatch.$or || [];
+        facetMatch.$or.push({ 'options.material': { $in: materialsCsv } }, { 'variants.material': { $in: materialsCsv } });
+      }
+      if (colorsCsv.length) {
+        facetMatch.$or = facetMatch.$or || [];
+        facetMatch.$or.push({ 'options.color': { $in: colorsCsv } }, { 'variants.color': { $in: colorsCsv } });
+      }
+      if (sizesCsv.length) {
+        facetMatch.$or = facetMatch.$or || [];
+        facetMatch.$or.push({ 'options.size': { $in: sizesCsv } }, { 'variants.size': { $in: sizesCsv } });
+      }
+
+      // Handle priceRanges CSV: these are keys like 'under_500k','500k_1m','above_1m'
+      if (priceRangesCsv.length) {
+        // translate to min/max price constraints (match any product whose min variant price falls into any selected bucket)
+        const priceOr = [];
+        for (const key of priceRangesCsv) {
+          if (key === 'under_500k') priceOr.push({ priceMin: { $lte: 500000 } });
+          else if (key === '500k_1m') priceOr.push({ priceMin: { $gt: 500000, $lte: 1000000 } });
+          else if (key === 'above_1m') priceOr.push({ priceMin: { $gt: 1000000 } });
+        }
+        if (priceOr.length) facetMatch.$or = facetMatch.$or ? facetMatch.$or.concat(priceOr) : priceOr;
+      }
+
+      // inStock filter
+      if (inStockCsv.length) {
+        const stockOr = [];
+        if (inStockCsv.includes('in_stock')) stockOr.push({ $expr: { $gt: [{ $sum: '$variants.quantity' }, 0] } });
+        if (inStockCsv.includes('out_of_stock')) stockOr.push({ $expr: { $lte: [{ $sum: '$variants.quantity' }, 0] } });
+        if (stockOr.length) facetMatch.$or = facetMatch.$or ? facetMatch.$or.concat(stockOr) : stockOr;
+      }
+
+      aggregatedFilters = await getAggregatedFilters(facetMatch);
+    }
+
+    // Return response with filters (if requested)
+    return v1.ok(res, rows, { meta: { page, limit, total, totalPages }, filters: aggregatedFilters });
   } catch (error) {
     return v1.serverError(res, error);
   }
