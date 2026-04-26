@@ -7,154 +7,142 @@ const Theme = require("../models/theme.model");
 const Collection = require("../models/collection.model");
 const Category = require("../models/category.model");
 
-// Helper function to get aggregated filters
-async function getAggregatedFilters(categorySlug = "") {
+// Helper function to get aggregated filters for a given match query
+async function getAggregatedFilters(matchQuery = {}) {
   try {
-    const filterQuery = { deleted: false };
-    
-    // If categorySlug is provided, get filters for that category and its children
-    if (categorySlug) {
-      const rootCat = await Category.findOne({ slug: categorySlug, deleted: false }).lean();
-      if (rootCat) {
-        // Include children categories
-        const children = await Category.find({ 
-          parent: String(rootCat._id), 
-          deleted: false 
-        }).select('_id').lean();
-        
-        const childIds = (children || []).map((c) => String(c._id));
-        const resolvedCategoryIds = [String(rootCat._id), ...childIds];
-        filterQuery['category'] = { $in: resolvedCategoryIds };
-      }
-    }
-    
-    // Get distinct values from products
-    // Note: materials, colors, sizes are stored in options as strings
-    // themes and collections are stored as direct references
-    let [optionMaterials, optionColors, optionSizes, themes, collections] = await Promise.all([
-      Product.distinct('options.materials', filterQuery),
-      Product.distinct('options.colors', filterQuery),
-      Product.distinct('options.sizes', filterQuery),
-      Product.distinct('themes', filterQuery),
-      Product.distinct('collections', filterQuery)
+    const baseMatch = { deleted: false, ...(matchQuery || {}) };
+
+    // Materials / Colors / Sizes counts (merge options.* and variants.*)
+    const [materialsAgg, colorsAgg, sizesAgg] = await Promise.all([
+      Product.aggregate([
+        { $match: baseMatch },
+        {
+          $project: {
+            merged: { $concatArrays: ["$options.materials", { $map: { input: "$variants", as: "v", in: "$$v.material" } }] },
+          },
+        },
+        { $unwind: "$merged" },
+        { $group: { _id: "$merged", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      Product.aggregate([
+        { $match: baseMatch },
+        {
+          $project: {
+            merged: { $concatArrays: ["$options.colors", { $map: { input: "$variants", as: "v", in: "$$v.color" } }] },
+          },
+        },
+        { $unwind: "$merged" },
+        { $group: { _id: "$merged", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      Product.aggregate([
+        { $match: baseMatch },
+        {
+          $project: {
+            merged: { $concatArrays: ["$options.sizes", { $map: { input: "$variants", as: "v", in: "$$v.size" } }] },
+          },
+        },
+        { $unwind: "$merged" },
+        { $group: { _id: "$merged", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
     ]);
-    
-    // Also get materials, colors, sizes from variants
-    const [variantMaterials, variantColors, variantSizes] = await Promise.all([
-      Product.distinct('variants.material', filterQuery),
-      Product.distinct('variants.color', filterQuery),
-      Product.distinct('variants.size', filterQuery)
-    ]);
-    
-    // Debug log (comment out for production)
-    // console.log('=== DEBUG FILTER VALUES ===');
-    // console.log('Option materials:', optionMaterials);
-    // console.log('Option colors:', optionColors);
-    // console.log('Option sizes:', optionSizes);
-    // console.log('Variant materials:', variantMaterials);
-    // console.log('Variant colors:', variantColors);
-    // console.log('Variant sizes:', variantSizes);
-    
-    // Merge unique values from options and variants
-    const materials = [...new Set([...optionMaterials, ...variantMaterials])].filter(Boolean);
-    const colors = [...new Set([...optionColors, ...variantColors])].filter(Boolean);
-    const sizes = [...new Set([...optionSizes, ...variantSizes])].filter(Boolean);
-    
-    // If we have no materials or colors from products, return all active materials/colors from database
-    if (materials.length === 0) {
-      const allMaterials = await Material.find({ deleted: false }).select('_id name avatar').lean();
-      console.log(`No materials in products, returning all ${allMaterials.length} materials from DB`);
-      return {
-        materials: allMaterials,
-        colors: colors.length > 0 ? await Color.find({ name: { $in: colors }, deleted: false }) : await Color.find({ deleted: false }).select('_id name avatar').lean(),
-        sizes: sizes.length > 0 ? await Size.find({ name: { $in: sizes }, deleted: false }) : [],
-        themes: themes.length > 0 ? await Theme.find({ _id: { $in: themes }, deleted: false }) : [],
-        collections: collections.length > 0 ? await Collection.find({ _id: { $in: collections }, deleted: false }) : [],
-        price_ranges: generatePriceRanges(0, 0)
-      };
-    }
-    
-    if (colors.length === 0) {
-      const allColors = await Color.find({ deleted: false }).select('_id name avatar').lean();
-      console.log(`No colors in products, returning all ${allColors.length} colors from DB`);
-      return {
-        materials: materials.length > 0 ? await Material.find({ name: { $in: materials }, deleted: false }) : await Material.find({ deleted: false }).select('_id name avatar').lean(),
-        colors: allColors,
-        sizes: sizes.length > 0 ? await Size.find({ name: { $in: sizes }, deleted: false }) : [],
-        themes: themes.length > 0 ? await Theme.find({ _id: { $in: themes }, deleted: false }) : [],
-        collections: collections.length > 0 ? await Collection.find({ _id: { $in: collections }, deleted: false }) : [],
-        price_ranges: generatePriceRanges(0, 0)
-      };
-    }
-    
-    console.log('Merged materials:', materials);
-    console.log('Merged colors:', colors);
-    console.log('Merged sizes:', sizes);
-    
-// Get price ranges for this category
+
+    // Price ranges - fixed buckets: under 500k, 500k-1M, above 1M
+    // Prefer precomputed priceMin when available, fallback to min(variants.price)
     const priceStats = await Product.aggregate([
-      { $match: filterQuery },
-      { $unwind: '$variants' },
+      { $match: baseMatch },
+      { $addFields: { minVariantPrice: { $ifNull: ["$priceMin", { $min: "$variants.price" }] } } },
       {
         $group: {
           _id: null,
-          minPrice: { $min: '$variants.price' },
-          maxPrice: { $max: '$variants.price' }
-        }
-      }
+          under500k: { $sum: { $cond: [{ $lte: ["$minVariantPrice", 500000] }, 1, 0] } },
+          between500k_1m: { $sum: { $cond: [{ $and: [{ $gt: ["$minVariantPrice", 500000] }, { $lte: ["$minVariantPrice", 1000000] }] }, 1, 0] } },
+          above1m: { $sum: { $cond: [{ $gt: ["$minVariantPrice", 1000000] }, 1, 0] } },
+        },
+      },
     ]);
-    
-    // Generate price ranges based on min/max
-    const priceRanges = generatePriceRanges(
-      priceStats[0]?.minPrice || 0, 
-      priceStats[0]?.maxPrice || 10000000
-    );
-    
-    // Get full documents for each filter type
-    const [
-      materialDocs, 
-      colorDocs, 
-      sizeDocs, 
-      themeDocs, 
-      collectionDocs
-    ] = await Promise.all([
-      materials.length > 0 ? Material.find({ 
-        $or: [
-          { name: { $in: materials }, deleted: false },
-          { _id: { $in: materials.filter(m => mongoose.Types.ObjectId.isValid(m)) }, deleted: false }
-        ]
-      }) : [],
-      colors.length > 0 ? Color.find({ 
-        $or: [
-          { name: { $in: colors }, deleted: false },
-          { _id: { $in: colors.filter(c => mongoose.Types.ObjectId.isValid(c)) }, deleted: false }
-        ]
-      }) : [],
-      sizes.length > 0 ? Size.find({ 
-        $or: [
-          { name: { $in: sizes }, deleted: false },
-          { _id: { $in: sizes.filter(s => mongoose.Types.ObjectId.isValid(s)) }, deleted: false }
-        ]
-      }) : [],
-      themes.length > 0 ? Theme.find({ _id: { $in: themes }, deleted: false }) : [],
-      collections.length > 0 ? Collection.find({ _id: { $in: collections }, deleted: false }) : []
+
+    const priceAgg = priceStats[0] || { under500k: 0, between500k_1m: 0, above1m: 0 };
+
+    // In-stock / out-of-stock counts
+    const stockAgg = await Product.aggregate([
+      { $match: baseMatch },
+      { $addFields: { totalQty: { $sum: "$variants.quantity" } } },
+      {
+        $group: {
+          _id: null,
+          inStock: { $sum: { $cond: [{ $gt: ["$totalQty", 0] }, 1, 0] } },
+          outOfStock: { $sum: { $cond: [{ $lte: ["$totalQty", 0] }, 1, 0] } },
+        },
+      },
     ]);
-    
-    // If we got no materials or colors from products, get all from database
-    const finalMaterials = materialDocs.length > 0 ? materialDocs : await Material.find({ deleted: false }).select('_id name avatar').lean();
-    const finalColors = colorDocs.length > 0 ? colorDocs : await Color.find({ deleted: false }).select('_id name avatar').lean();
-    
-    console.log(`Final materials count: ${finalMaterials.length}`);
-    console.log(`Final colors count: ${finalColors.length}`);
-    console.log(`Final sizes count: ${sizeDocs.length}`);
-    
+
+    const stockCounts = stockAgg[0] || { inStock: 0, outOfStock: 0 };
+
+    // Enrich material/color/size keys by resolving to DB docs when possible
+    const materialKeys = materialsAgg.map((m) => String(m._id)).filter(Boolean);
+    const colorKeys = colorsAgg.map((c) => String(c._id)).filter(Boolean);
+    const sizeKeys = sizesAgg.map((s) => String(s._id)).filter(Boolean);
+
+    // Fetch matching docs by _id or name
+    const [materialDocsById, materialDocsByName] = await Promise.all([
+      Material.find({ _id: { $in: materialKeys.filter(k => mongoose.Types.ObjectId.isValid(k)) }, deleted: false }).lean(),
+      Material.find({ name: { $in: materialKeys.filter(k => !mongoose.Types.ObjectId.isValid(k)) }, deleted: false }).lean(),
+    ]);
+    const materialDocs = [...materialDocsById, ...materialDocsByName];
+
+    const [colorDocsById, colorDocsByName] = await Promise.all([
+      Color.find({ _id: { $in: colorKeys.filter(k => mongoose.Types.ObjectId.isValid(k)) }, deleted: false }).lean(),
+      Color.find({ name: { $in: colorKeys.filter(k => !mongoose.Types.ObjectId.isValid(k)) }, deleted: false }).lean(),
+    ]);
+    const colorDocs = [...colorDocsById, ...colorDocsByName];
+
+    const [sizeDocsById, sizeDocsByName] = await Promise.all([
+      Size.find({ _id: { $in: sizeKeys.filter(k => mongoose.Types.ObjectId.isValid(k)) }, deleted: false }).lean(),
+      Size.find({ name: { $in: sizeKeys.filter(k => !mongoose.Types.ObjectId.isValid(k)) }, deleted: false }).lean(),
+    ]);
+    const sizeDocs = [...sizeDocsById, ...sizeDocsByName];
+
+    // Map aggregation results into final arrays with counts
+    const materials = materialsAgg.map((m) => {
+      const key = String(m._id);
+      const doc = materialDocs.find(d => String(d._id) === key) || materialDocs.find(d => String(d.name) === key);
+      return { _id: doc?._id || key, name: doc?.name || key, count: m.count };
+    });
+
+    const colors = colorsAgg.map((c) => {
+      const key = String(c._id);
+      const doc = colorDocs.find(d => String(d._id) === key) || colorDocs.find(d => String(d.name) === key);
+      return { _id: doc?._id || key, name: doc?.name || key, count: c.count };
+    });
+
+    const sizes = sizesAgg.map((s) => {
+      const key = String(s._id);
+      const doc = sizeDocs.find(d => String(d._id) === key) || sizeDocs.find(d => String(d.name) === key);
+      return { _id: doc?._id || key, name: doc?.name || key, count: s.count };
+    });
+
+    const price_ranges = [
+      { key: 'under_500k', min: 0, max: 500000, label: 'Dưới 500.000đ', count: priceAgg.under500k || 0 },
+      { key: '500k_1m', min: 500001, max: 1000000, label: '500.001đ - 1.000.000đ', count: priceAgg.between500k_1m || 0 },
+      { key: 'above_1m', min: 1000001, max: Number.MAX_SAFE_INTEGER, label: 'Trên 1.000.000đ', count: priceAgg.above1m || 0 },
+    ];
+
+    const inStock = [
+      { key: 'in_stock', label: 'Còn hàng', count: stockCounts.inStock || 0 },
+      { key: 'out_of_stock', label: 'Hết hàng', count: stockCounts.outOfStock || 0 },
+    ];
+
     return {
-      materials: finalMaterials,
-      colors: finalColors,
-      sizes: sizeDocs,
-      themes: themeDocs,
-      collections: collectionDocs,
-      price_ranges: priceRanges
+      materials,
+      colors,
+      sizes,
+      themes: [],
+      collections: [],
+      price_ranges,
+      inStock,
     };
   } catch (error) {
     console.error('Error getting aggregated filters:', error);
@@ -164,7 +152,8 @@ async function getAggregatedFilters(categorySlug = "") {
       sizes: [],
       themes: [],
       collections: [],
-      price_ranges: []
+      price_ranges: [],
+      inStock: [],
     };
   }
 }
