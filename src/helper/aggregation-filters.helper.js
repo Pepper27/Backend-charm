@@ -106,23 +106,35 @@ async function getAggregatedFilters(matchQuery = {}) {
     const sizeDocs = [...sizeDocsById, ...sizeDocsByName];
 
     // Map aggregation results into final arrays with counts
-    const materials = materialsAgg.map((m) => {
-      const key = String(m._id);
-      const doc = materialDocs.find(d => String(d._id) === key) || materialDocs.find(d => String(d.name) === key);
-      return { _id: doc?._id || key, name: doc?.name || key, count: m.count };
-    });
+    // Only include material buckets that resolve to an existing Material doc.
+    const materials = materialsAgg
+      .map((m) => {
+        const key = String(m._id);
+        const doc = materialDocs.find(d => String(d._id) === key) || materialDocs.find(d => String(d.name) === key);
+        if (!doc) return null; // skip values not present in Material collection
+        return { _id: doc._id, name: doc.name, count: m.count };
+      })
+      .filter(Boolean);
 
-    const colors = colorsAgg.map((c) => {
-      const key = String(c._id);
-      const doc = colorDocs.find(d => String(d._id) === key) || colorDocs.find(d => String(d.name) === key);
-      return { _id: doc?._id || key, name: doc?.name || key, count: c.count };
-    });
+    // Only include color buckets that resolve to an existing Color doc.
+    const colors = colorsAgg
+      .map((c) => {
+        const key = String(c._id);
+        const doc = colorDocs.find(d => String(d._id) === key) || colorDocs.find(d => String(d.name) === key);
+        if (!doc) return null; // skip values not present in Color collection
+        return { _id: doc._id, name: doc.name, count: c.count };
+      })
+      .filter(Boolean);
 
-    const sizes = sizesAgg.map((s) => {
-      const key = String(s._id);
-      const doc = sizeDocs.find(d => String(d._id) === key) || sizeDocs.find(d => String(d.name) === key);
-      return { _id: doc?._id || key, name: doc?.name || key, count: s.count };
-    });
+    // Only include size buckets that resolve to an existing Size doc.
+    const sizes = sizesAgg
+      .map((s) => {
+        const key = String(s._id);
+        const doc = sizeDocs.find(d => String(d._id) === key) || sizeDocs.find(d => String(d.name) === key);
+        if (!doc) return null; // skip values not present in Size collection
+        return { _id: doc._id, name: doc.name, count: s.count };
+      })
+      .filter(Boolean);
 
     const price_ranges = [
       { key: 'under_500k', min: 0, max: 500000, label: 'Dưới 500.000đ', count: priceAgg.under500k || 0 },
