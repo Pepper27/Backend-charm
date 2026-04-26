@@ -4,6 +4,7 @@ const Size = require("../../../models/size.model");
 
 router.get("/", authMiddleware.verifyToken, async (req, res) => {
 	try {
+		console.log("Fetching sizes");
 		const list = await Size.find({ deleted: false }).lean();
 		res.status(200).json({ data: list });
 	} catch (err) {
