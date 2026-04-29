@@ -1,6 +1,10 @@
 const mongoose = require("mongoose");
 const Product = require("../../../models/product.model");
 const Category = require("../../../models/category.model");
+const Material = require("../../../models/material.model");
+const Color = require("../../../models/color.model");
+const Size = require("../../../models/size.model");
+const Collection = require("../../../models/collection.model");
 
 const { parseIntSafe } = require("../../../helper/number.helper");
 const { escapeRegex } = require("../../../helper/escape-regex.helper");
@@ -113,27 +117,33 @@ module.exports.list = async (req, res) => {
     }
 
     // Handle materials, colors, and sizes (string values in options and variants)
+    // Support incoming CSV values that may be _id (ObjectId) or names. If _id provided,
+    // lookup the corresponding name in admin collections and use the name to match legacy text fields.
     const stringFacetKeys = ["materials", "colors", "sizes"];
     for (const key of stringFacetKeys) {
       const vals = toIdArray(filters[key]);
       if (vals.length > 0) {
-        // Convert to string values
-        const stringValues = vals.map(String).filter(Boolean);
-        
+        // Resolve ObjectId values to names when possible
+        const Model = key === 'materials' ? Material : key === 'colors' ? Color : Size;
+        let stringValues = [];
+        // split ids and plain strings
+        const objIds = vals.filter(v => mongoose.Types.ObjectId.isValid(v)).map(v => new mongoose.Types.ObjectId(v));
+        const plain = vals.filter(v => !mongoose.Types.ObjectId.isValid(v)).map(String).map(s => s.trim()).filter(Boolean);
+        if (objIds.length) {
+          const docs = await Model.find({ _id: { $in: objIds }, deleted: false }).lean();
+          const docNames = docs.map(d => String(d.name));
+          stringValues = [...new Set([...plain, ...docNames])];
+        } else {
+          stringValues = plain;
+        }
+
         if (stringValues.length > 0) {
           // Match in options array (e.g., "options.materials")
           const optionsPath = `options.${key.slice(0, -1)}`; // "materials" -> "options.material"
-          
           // Match in variants (e.g., "variants.material")
           const variantPath = `variants.${key.slice(0, -1)}`; // "materials" -> "variants.material"
-          
-          // Add to existing $or array or create new one
           if (!match.$or) match.$or = [];
-          
-          match.$or.push(
-            { [optionsPath]: { $in: stringValues } },
-            { [variantPath]: { $in: stringValues } }
-          );
+          match.$or.push({ [optionsPath]: { $in: stringValues } }, { [variantPath]: { $in: stringValues } });
         }
       }
     }
@@ -244,9 +254,23 @@ module.exports.list = async (req, res) => {
         return String(val).split(',').map((s) => s.trim()).filter(Boolean);
       };
 
-      const sizesCsv = toArray(req.query.sizes || filters.sizes);
-      const colorsCsv = toArray(req.query.colors || filters.colors);
-      const materialsCsv = toArray(req.query.materials || filters.materials || filters.materials);
+      const sizesCsvRaw = toArray(req.query.sizes || filters.sizes);
+      const colorsCsvRaw = toArray(req.query.colors || filters.colors);
+      const materialsCsvRaw = toArray(req.query.materials || filters.materials || filters.materials);
+      // Translate any incoming ids into names for matching legacy product fields
+      const translate = async (rawArr, Model) => {
+        if (!rawArr || !rawArr.length) return [];
+        const objIds = rawArr.filter(v => mongoose.Types.ObjectId.isValid(v)).map(v => new mongoose.Types.ObjectId(v));
+        const names = rawArr.filter(v => !mongoose.Types.ObjectId.isValid(v)).map(s => String(s).trim()).filter(Boolean);
+        if (!objIds.length) return names;
+        const docs = await Model.find({ _id: { $in: objIds }, deleted: false }).lean();
+        const docNames = docs.map(d => String(d.name));
+        return [...new Set([...names, ...docNames])];
+      };
+
+      const sizesCsv = await translate(sizesCsvRaw, Size);
+      const colorsCsv = await translate(colorsCsvRaw, Color);
+      const materialsCsv = await translate(materialsCsvRaw, Material);
       const inStockCsv = toArray(req.query.inStock || filters.inStock);
       const priceRangesCsv = toArray(req.query.priceRanges || filters.priceRanges);
 
@@ -284,7 +308,42 @@ module.exports.list = async (req, res) => {
         if (stockOr.length) facetMatch.$or = facetMatch.$or ? facetMatch.$or.concat(stockOr) : stockOr;
       }
 
-      aggregatedFilters = await getAggregatedFilters(facetMatch);
+       // get aggregated counts based on current facetMatch
+       const rawAggregated = await getAggregatedFilters(facetMatch);
+
+       // Fetch full admin lists in parallel and annotate counts (include items with count = 0)
+       const [allMaterials, allColors, allSizes, allCollections] = await Promise.all([
+         Material.find({ deleted: false }).lean(),
+         Color.find({ deleted: false }).lean(),
+         Size.find({ deleted: false }).lean(),
+         Collection.find({ deleted: false }).lean(),
+       ]);
+
+       const makeCountMap = (arr) => {
+         if (!Array.isArray(arr)) return new Map();
+         return new Map(arr.map(i => [String(i._id), i.count]));
+       };
+
+       const matMap = makeCountMap(rawAggregated.materials);
+       const colMap = makeCountMap(rawAggregated.colors);
+       const sizeMap = makeCountMap(rawAggregated.sizes);
+       const collMap = makeCountMap(rawAggregated.collections || []);
+
+       const materials = (allMaterials || []).map(m => ({ _id: m._id, name: m.name, count: matMap.get(String(m._id)) || 0 }));
+       const colors = (allColors || []).map(c => ({ _id: c._id, name: c.name, count: colMap.get(String(c._id)) || 0 }));
+       const sizes = (allSizes || []).map(s => ({ _id: s._id, name: s.name, count: sizeMap.get(String(s._id)) || 0 }));
+       const collections = (allCollections || []).map(c => ({ _id: c._id, name: c.name, count: collMap.get(String(c._id)) || 0 }));
+
+       // Build final aggregatedFilters object that contains full admin lists annotated with counts
+       aggregatedFilters = {
+         materials,
+         colors,
+         sizes,
+         themes: rawAggregated.themes || [],
+         collections,
+         price_ranges: rawAggregated.price_ranges || [],
+         inStock: rawAggregated.inStock || [],
+       };
     }
 
     // Return response with filters (if requested)
