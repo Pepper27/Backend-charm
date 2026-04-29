@@ -12,39 +12,68 @@ async function getAggregatedFilters(matchQuery = {}) {
   try {
     const baseMatch = { deleted: false, ...(matchQuery || {}) };
 
-    // Materials / Colors / Sizes counts (merge options.* and variants.*)
-    const [materialsAgg, colorsAgg, sizesAgg] = await Promise.all([
+    // Materials / Colors / Sizes / Collections counts (merge options.* and variants.*)
+    const [materialsAgg, colorsAgg, sizesAgg, collectionsAgg] = await Promise.all([
+      // Materials: build a set of unique material values per product, then count distinct products per material
       Product.aggregate([
         { $match: baseMatch },
         {
           $project: {
-            merged: { $concatArrays: ["$options.materials", { $map: { input: "$variants", as: "v", in: "$$v.material" } }] },
+            merged: {
+              $setUnion: [
+                { $ifNull: ["$options.materials", []] },
+                { $ifNull: [{ $map: { input: "$variants", as: "v", in: "$$v.material" } }, []] },
+              ],
+            },
           },
         },
         { $unwind: "$merged" },
-        { $group: { _id: "$merged", count: { $sum: 1 } } },
+        { $group: { _id: "$merged", products: { $addToSet: "$_id" } } },
+        { $project: { _id: "$_id", count: { $size: "$products" } } },
         { $sort: { count: -1 } },
       ]),
+      // Colors: similar approach
       Product.aggregate([
         { $match: baseMatch },
         {
           $project: {
-            merged: { $concatArrays: ["$options.colors", { $map: { input: "$variants", as: "v", in: "$$v.color" } }] },
+            merged: {
+              $setUnion: [
+                { $ifNull: ["$options.colors", []] },
+                { $ifNull: [{ $map: { input: "$variants", as: "v", in: "$$v.color" } }, []] },
+              ],
+            },
           },
         },
         { $unwind: "$merged" },
-        { $group: { _id: "$merged", count: { $sum: 1 } } },
+        { $group: { _id: "$merged", products: { $addToSet: "$_id" } } },
+        { $project: { _id: "$_id", count: { $size: "$products" } } },
         { $sort: { count: -1 } },
       ]),
+      // Sizes: similar approach
       Product.aggregate([
         { $match: baseMatch },
         {
           $project: {
-            merged: { $concatArrays: ["$options.sizes", { $map: { input: "$variants", as: "v", in: "$$v.size" } }] },
+            merged: {
+              $setUnion: [
+                { $ifNull: ["$options.sizes", []] },
+                { $ifNull: [{ $map: { input: "$variants", as: "v", in: "$$v.size" } }, []] },
+              ],
+            },
           },
         },
         { $unwind: "$merged" },
-        { $group: { _id: "$merged", count: { $sum: 1 } } },
+        { $group: { _id: "$merged", products: { $addToSet: "$_id" } } },
+        { $project: { _id: "$_id", count: { $size: "$products" } } },
+        { $sort: { count: -1 } },
+      ]),
+      // Collections aggregation: count distinct products per collection
+      Product.aggregate([
+        { $match: baseMatch },
+        { $unwind: "$collections" },
+        { $group: { _id: "$collections", products: { $addToSet: "$_id" } } },
+        { $project: { _id: "$_id", count: { $size: "$products" } } },
         { $sort: { count: -1 } },
       ]),
     ]);
@@ -105,6 +134,14 @@ async function getAggregatedFilters(matchQuery = {}) {
     ]);
     const sizeDocs = [...sizeDocsById, ...sizeDocsByName];
 
+    // Resolve collection aggregation keys to Collection docs
+    const collectionKeys = (collectionsAgg || []).map(c => String(c._id)).filter(Boolean);
+    const [collectionDocsById, collectionDocsByName] = await Promise.all([
+      Collection.find({ _id: { $in: collectionKeys.filter(k => mongoose.Types.ObjectId.isValid(k)) }, deleted: false }).lean(),
+      Collection.find({ name: { $in: collectionKeys.filter(k => !mongoose.Types.ObjectId.isValid(k)) }, deleted: false }).lean(),
+    ]);
+    const collectionDocs = [...collectionDocsById, ...collectionDocsByName];
+
     // Map aggregation results into final arrays with counts
     // Only include material buckets that resolve to an existing Material doc.
     const materials = materialsAgg
@@ -136,6 +173,15 @@ async function getAggregatedFilters(matchQuery = {}) {
       })
       .filter(Boolean);
 
+    const collections = (collectionsAgg || [])
+      .map((colAgg) => {
+        const key = String(colAgg._id);
+        const doc = collectionDocs.find(d => String(d._id) === key) || collectionDocs.find(d => String(d.name) === key);
+        if (!doc) return null; // skip values not present in Collection collection
+        return { _id: doc._id, name: doc.name, count: colAgg.count };
+      })
+      .filter(Boolean);
+
     const price_ranges = [
       { key: 'under_500k', min: 0, max: 500000, label: 'Dưới 500.000đ', count: priceAgg.under500k || 0 },
       { key: '500k_1m', min: 500001, max: 1000000, label: '500.001đ - 1.000.000đ', count: priceAgg.between500k_1m || 0 },
@@ -152,7 +198,7 @@ async function getAggregatedFilters(matchQuery = {}) {
       colors,
       sizes,
       themes: [],
-      collections: [],
+      collections,
       price_ranges,
       inStock,
     };
