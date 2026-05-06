@@ -99,6 +99,8 @@ module.exports.checkoutBundles = async (req, res) => {
     const guestId = ensureGuestIdCookie(req, res);
     const body = req.body || {};
     const bundleIds = Array.isArray(body.bundleIds) ? body.bundleIds.map(String) : [];
+    // support productLineIds to checkout legacy cart.products lines
+    const productLineIds = Array.isArray(body.productLineIds) ? body.productLineIds.map(String) : [];
 
     const phone = normalizePhone(body.phone);
     const fullName = normalizeName(body.fullName);
@@ -109,8 +111,8 @@ module.exports.checkoutBundles = async (req, res) => {
     if (!phone || !fullName || !address) {
       return res.status(400).json({ message: "Thiếu thông tin: phone, fullName, address" });
     }
-    if (!bundleIds.length) {
-      return res.status(400).json({ message: "Thiếu bundleIds" });
+    if (!bundleIds.length && !productLineIds.length) {
+      return res.status(400).json({ message: "Thiếu bundleIds hoặc productLineIds" });
     }
     if (method !== "cash" && method !== "zalopay") {
       return res.status(400).json({ message: "Phương thức thanh toán không hợp lệ" });
@@ -124,8 +126,11 @@ module.exports.checkoutBundles = async (req, res) => {
 
     const allBundles = Array.isArray(cart.bundles) ? cart.bundles : [];
     const selectedBundles = allBundles.filter((b) => bundleIds.includes(String(b.bundleId)));
-    if (!selectedBundles.length) {
-      return res.status(400).json({ message: "Không tìm thấy bundle trong giỏ" });
+    // find selected product lines
+    const allProducts = Array.isArray(cart.products) ? cart.products : [];
+    const selectedProductLines = allProducts.filter((p) => productLineIds.includes(String(p._id)));
+    if (!selectedBundles.length && !selectedProductLines.length) {
+      return res.status(400).json({ message: "Không tìm thấy bundle hoặc product line trong giỏ" });
     }
 
     // Re-validate and compute canonical snapshots.
@@ -157,6 +162,33 @@ module.exports.checkoutBundles = async (req, res) => {
       }
     }
 
+    // Include selected product lines (legacy products[]) as direct component lines
+    for (const pl of selectedProductLines) {
+      // pl: { productId, variantId, quantity, price }
+      const product = await Product.findOne({ _id: pl.productId, deleted: false }).lean();
+      if (!product) {
+        return res.status(400).json({ message: `Product not found: ${pl.productId}` });
+      }
+      const variantId = String(pl.variantId);
+      const variant = product.variants.find((v) => String(v._id) === variantId || String(v.code) === variantId);
+      if (!variant) {
+        return res.status(400).json({ message: `Variant not found for product line: ${variantId}` });
+      }
+      const line = {
+        productId: String(product._id),
+        variantId: String(variant._id),
+        price: Number(variant.price) || Number(pl.price) || 0,
+        quantity: Number(pl.quantity) || 0,
+        name: String(product.name || ""),
+        image: imageForVariant(variant),
+      };
+      allLines.push(line);
+      requiredByVariantId.set(
+        String(variant._id),
+        (requiredByVariantId.get(String(variant._id)) || 0) + (Number(line.quantity) || 0)
+      );
+    }
+
     // Stock checks against aggregated demand.
     const productUpdates = [];
     for (const [variantId, requiredQuantity] of requiredByVariantId.entries()) {
@@ -185,11 +217,13 @@ module.exports.checkoutBundles = async (req, res) => {
     }
 
     const orderCode = `ORD${Date.now()}${helper.generateRandomNumber(4)}`;
-    const totalPrice = validated.reduce(
+    const productsPrice = selectedProductLines.reduce((s, p) => s + (Number(p.price) || 0) * (Number(p.quantity) || 0), 0);
+    const bundlesPrice = validated.reduce(
       (sum, { bundle, result }) =>
         sum + (Number(result?.pricing?.total) || 0) * (Number(bundle?.quantity) || 1),
       0
     );
+    const totalPrice = bundlesPrice + productsPrice;
 
     const order = new Order({
       userId: req.client?._id ? new mongoose.Types.ObjectId(req.client._id) : null,
@@ -228,8 +262,14 @@ module.exports.checkoutBundles = async (req, res) => {
 
     await order.save();
 
-    // Clear selected bundles from cart.
-    await Cart.updateOne(cartKey, { $pull: { bundles: { bundleId: { $in: bundleIds } } } });
+    // Clear selected bundles and product lines from cart.
+    const update = {};
+    if (bundleIds.length) update.$pull = { bundles: { bundleId: { $in: bundleIds } } };
+    if (productLineIds.length) update.$pull = update.$pull || {};
+    if (productLineIds.length) update.$pull.products = { _id: { $in: productLineIds } };
+    if (Object.keys(update).length) {
+      await Cart.updateOne(cartKey, update);
+    }
 
     return res.status(201).json({
       message: "Tạo đơn hàng thành công",

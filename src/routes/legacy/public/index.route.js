@@ -31,6 +31,10 @@ router.get("/cart", cartController.getCart);
 router.post("/cart/bundles", cartController.addBundleToCart);
 router.patch("/cart/bundles/:bundleId", cartController.patchBundle);
 router.delete("/cart/bundles/:bundleId", cartController.deleteBundle);
+// Product-level cart API: add a normal product line to cart.products
+router.post("/cart/products", cartController.addProductToCart);
+router.patch("/cart/products/:lineId", cartController.patchProduct);
+router.delete("/cart/products/:lineId", cartController.deleteProduct);
 
 router.get("/designs", designController.listDesigns);
 router.post("/designs", designController.saveDesignAndAddToCart);
