@@ -37,5 +37,11 @@ router.use("/materials", legacyMaterials);
 router.use("/colors", legacyColors);
 router.use("/sizes", legacySizes);
 
+// Minimal refund job management (v1)
+const refundController = require("../../../controllers/v1/admin/refund.controller");
+router.get("/refunds", refundController.list);
+router.post("/refunds/:id/retry", refundController.retry);
+router.patch("/refunds/:id/manual", refundController.manual);
+
 
 module.exports = router;

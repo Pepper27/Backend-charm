@@ -9,5 +9,6 @@ router.use(requireAuth, requireRole("client"));
 router.get("/orders/stats", ordersController.stats);
 router.get("/orders", ordersController.list);
 router.get("/orders/:orderCode", ordersController.getByCode);
+router.post("/orders/:orderCode/cancel", ordersController.cancel);
 
 module.exports = router;

@@ -50,6 +50,8 @@ const orderItemSchema = new mongoose.Schema({
   price: Number,
   quantity: Number,
   image: String,
+  // Whether this line has been restocked after a cancel to avoid double-restock.
+  stockReleased: { type: Boolean, default: false },
 });
 const schema = new mongoose.Schema(
   {
@@ -87,6 +89,37 @@ const schema = new mongoose.Schema(
       type: String,
       enum: ["unpaid", "paid"],
       default: "unpaid",
+    },
+    // Cancellation metadata
+    cancelledAt: Date,
+    cancelledBy: { type: String, enum: ["customer", "admin", "system", ""], default: "" },
+    cancelReason: { type: String, default: "" },
+    // Status history for audit and UI timeline
+    statusHistory: [
+      {
+        status: String,
+        changedAt: Date,
+        changedBy: String,
+        note: String,
+      },
+    ],
+    // Payment related details (refundStatus and refund history kept here)
+    payment: {
+      capturedAmount: { type: Number, default: 0 },
+      providerChargeId: { type: String, default: "" },
+      refundStatus: {
+        type: String,
+        enum: ["none", "pending", "processing", "succeeded", "failed", "manual_review"],
+        default: "none",
+      },
+      refunds: [
+        {
+          amount: Number,
+          createdAt: Date,
+          status: String,
+          providerResponse: mongoose.Schema.Types.Mixed,
+        },
+      ],
     },
     updatedBy: String,
     deletedBy: String,
