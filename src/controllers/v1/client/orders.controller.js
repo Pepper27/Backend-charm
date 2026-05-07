@@ -5,6 +5,20 @@ const RefundJob = require("../../../models/refundJob.model");
 
 const normalizeStatus = (value) => String(value || "").trim();
 
+const inferPayStatus = (o) => {
+  try {
+    if (!o) return "unpaid";
+    if (o.payStatus) return o.payStatus;
+    const method = String(o.method || "").trim().toLowerCase();
+    const provider = String((o.payment && o.payment.provider) || "").trim().toLowerCase();
+    const captured = Number((o.payment && o.payment.capturedAmount) || 0);
+    if (method.includes("zalopay") || provider.includes("zalopay") || captured > 0) return "paid";
+    return "unpaid";
+  } catch (e) {
+    return "unpaid";
+  }
+};
+
 // GET /api/v1/client/orders/stats
 // Returns badge counts for client order hub.
 module.exports.stats = async (req, res) => {
@@ -69,7 +83,10 @@ module.exports.list = async (req, res) => {
       )
       .lean();
 
-    return v1.ok(res, orders || [], {
+    // Ensure payStatus is present/inferred for client UI
+    const withPay = (orders || []).map((o) => ({ ...o, payStatus: o.payStatus || inferPayStatus(o) }));
+
+    return v1.ok(res, withPay || [], {
       total,
       currentPage: safePage,
       totalPage,
@@ -97,6 +114,8 @@ module.exports.getByCode = async (req, res) => {
       return v1.fail(res, 404, "NOT_FOUND", "Order not found");
     }
 
+    // infer payStatus if missing so client UI shows correct payment state
+    order.payStatus = order.payStatus || inferPayStatus(order);
     return v1.ok(res, order);
   } catch (error) {
     return v1.serverError(res, error);
