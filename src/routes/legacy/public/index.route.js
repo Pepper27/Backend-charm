@@ -7,6 +7,7 @@ const authController = require("../../../controllers/public/auth.controller");
 const categoryController = require("../../../controllers/public/category.controller");
 const publicAuthMiddleware = require("../../../middlewares/public/auth.middleware");
 const checkoutController = require("../../../controllers/public/checkout.controller");
+const zaloController = require("../../../controllers/public/zalo.controller");
 const wishlistRouter = require("./wishlist.route");
 
 // Attach client identity when token is present.
@@ -21,6 +22,11 @@ router.post("/mix/validate", mixController.validateMix);
 
 // Bundle-centric checkout (guest + logged-in).
 router.post("/checkout", checkoutController.checkoutBundles);
+
+// ZaloPay webhook (server-to-server)
+router.post("/zalopay/webhook", zaloController.webhook);
+// Client redirect confirmation (frontend may call this after returning from provider)
+router.post("/zalopay/confirm", zaloController.confirm);
 
 // Guest/client order tracking (by phone/email) and order detail.
 router.get("/orders/lookup", checkoutController.lookupOrders);

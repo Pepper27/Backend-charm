@@ -234,6 +234,17 @@ module.exports.checkoutBundles = async (req, res) => {
       phone,
       address,
       method,
+      // Payment status & details: for ZaloPay in this environment we treat the
+      // checkout as captured (so admin UI shows paid). In production this should
+      // be set by the payment gateway callback when capture is confirmed.
+      payStatus: method === "zalopay" ? "paid" : "unpaid",
+      payment: method === "zalopay" ? {
+        provider: "zalopay",
+        capturedAmount: totalPrice,
+        providerChargeId: `ch_demo_${Date.now()}`,
+        refundStatus: "none",
+        refunds: [],
+      } : undefined,
       cart: allLines.map((it) => ({
         productId: it.productId,
         variantId: it.variantId,
@@ -261,6 +272,13 @@ module.exports.checkoutBundles = async (req, res) => {
     });
 
     await order.save();
+
+    // If method is zalopay, also mark payStatus to paid for newly-created orders
+    // (This is a pragmatic default for demo/local environments; in production
+    // real capture should be set by payment gateway callbacks.)
+    if (method === "zalopay") {
+      await Order.updateOne({ _id: order._id }, { $set: { payStatus: "paid" } });
+    }
 
     // Clear selected bundles and product lines from cart.
     const update = {};

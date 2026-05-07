@@ -4,6 +4,20 @@ const mongoose = require("mongoose");
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const inferPayStatus = (o) => {
+  try {
+    if (!o) return "unpaid";
+    if (o.payStatus) return o.payStatus;
+    const method = String(o.method || "").trim().toLowerCase();
+    const provider = String((o.payment && o.payment.provider) || "").trim().toLowerCase();
+    const captured = Number((o.payment && o.payment.capturedAmount) || 0);
+    if (method.includes("zalopay") || provider.includes("zalopay") || captured > 0) return "paid";
+    return "unpaid";
+  } catch (e) {
+    return "unpaid";
+  }
+};
+
 module.exports.getOrders = async (req, res) => {
   try {
     const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
@@ -77,10 +91,16 @@ module.exports.getOrders = async (req, res) => {
       .populate({ path: "userId", select: "fullName email phone" })
       .lean();
 
-    const withCounts = (orders || []).map((o) => ({
-      ...o,
-      itemsCount: (o.cart || []).reduce((sum, item) => sum + (Number(item?.quantity) || 0), 0),
-    }));
+    const withCounts = (orders || []).map((o) => {
+      const base = {
+        ...o,
+        itemsCount: (o.cart || []).reduce((sum, item) => sum + (Number(item?.quantity) || 0), 0),
+      };
+      // ensure payStatus is friendly for admin UI — always infer from available
+      // fields so admin sees correct payment state even for legacy rows.
+      base.payStatus = inferPayStatus(base);
+      return base;
+    });
 
     return res.status(200).json({
       data: withCounts,
@@ -108,6 +128,8 @@ module.exports.getOrderById = async (req, res) => {
     if (!order) {
       return res.status(404).json({ message: "Đơn hàng không tồn tại" });
     }
+    // ensure payStatus is present for UI convenience
+    order.payStatus = order.payStatus || inferPayStatus(order);
     return res.status(200).json({ data: order });
   } catch (error) {
     return res.status(500).json({ message: "Lỗi khi lấy chi tiết đơn hàng", error: error.message });
