@@ -6,6 +6,8 @@
   "scripts": {
     "start": "nodemon --inspect index.js",
     "start:prod": "NODE_ENV=production node index.js",
+    "worker:refund": "node src/workers/refundWorker.js",
+    "job:autocancel": "node src/jobs/autoCancelJob.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier . --write"

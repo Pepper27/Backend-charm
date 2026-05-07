@@ -125,6 +125,13 @@ module.exports.updateOrder = async (req, res) => {
       return res.status(404).json({ message: "Đơn hàng không tồn tại" });
     }
     req.body.updatedBy = req.account.id;
+    // Business rule: cancelled is terminal. Do not allow admin to change a cancelled order
+    // back to any other lifecycle state to avoid stock/refund conflicts. If admin wants
+    // to "restore", they should create a new order instead.
+    if (String(order.status) === "cancelled" && req.body.status && String(req.body.status) !== "cancelled") {
+      const latest = await Order.findById(id).lean();
+      return res.status(409).json({ message: "Cancelled orders are terminal and cannot be reverted. Create a new order to restore.", data: latest });
+    }
     await Order.updateOne(
       {
         _id: id,
