@@ -1,3 +1,8 @@
 /node_modules
 /.env
 .DS_Store
+Charm-Jewelry-API-Postman.json
+charm-full-api-collection.json
+check-db.js
+create-sample-data.js
+debug-filters.js

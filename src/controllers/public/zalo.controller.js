@@ -1,60 +1,89 @@
 const Order = require("../../models/order.model");
-
-// Simple ZaloPay webhook and client confirm handlers.
-// Webhook: called server-to-server by ZaloPay. Verifies a shared secret
-// via header `x-zalopay-secret` matching process.env.ZALOPAY_WEBHOOK_SECRET.
-// Confirm: used by frontend redirect/return flow to notify backend when
-// the user returns from the payment provider (less secure than webhook,
-// but useful for demo/redirect flows).
+const Cart = require("../../models/cart.model");
+const crypto = require("crypto");
 
 const safeNum = (v) => {
   const n = Number(v || 0);
   return Number.isFinite(n) ? n : 0;
 };
 
+const zalopayConfig = () => {
+  return {
+    appId: String(process.env.ZALOPAY_ID || "").trim(),
+    key1: String(process.env.ZALOPAYKEY1 || "").trim(),
+    key2: String(process.env.ZALOPAYKEY2 || "").trim(),
+    domain: String(process.env.ZALOPAYDOMAIN || "https://sb-openapi.zalopay.vn").trim(),
+  };
+};
+
+const pullCartByOrderSnapshot = async (order) => {
+  try {
+    if (!order || !order.checkoutSnapshot) return;
+    const cartKey = order.userId ? { userId: String(order.userId) } : { guestId: String(order.guestId || "") };
+    const { bundleIds = [], productLineIds = [], buyNowVariantIds = [] } = order.checkoutSnapshot || {};
+    const update = {};
+    if (bundleIds && bundleIds.length) update.$pull = { bundles: { bundleId: { $in: bundleIds } } };
+    if (productLineIds && productLineIds.length) update.$pull = update.$pull || {};
+    if (productLineIds && productLineIds.length) update.$pull.products = { _id: { $in: productLineIds } };
+
+    if (buyNowVariantIds && buyNowVariantIds.length) {
+      update.$pull = update.$pull || {};
+      const existing = update.$pull.products || {};
+      update.$pull.products = {
+        $or: [ ...(existing && Object.keys(existing).length ? [existing] : []), { variantId: { $in: buyNowVariantIds } } ],
+      };
+    }
+
+    if (Object.keys(update).length) {
+      await Cart.updateOne(cartKey, update);
+    }
+  } catch (err) {
+    console.error("Error pulling cart for order cleanup:", err);
+  }
+};
+
+// Webhook handler follows Zalopay callback spec: body = { data: <json string>, mac: <hmac>, type }
 module.exports.webhook = async (req, res) => {
   try {
-    const secretHeader = String(req.headers["x-zalopay-secret"] || "");
-    const expected = String(process.env.ZALOPAY_WEBHOOK_SECRET || "");
-    if (!expected || !secretHeader || secretHeader !== expected) {
-      return res.status(401).json({ message: "Unauthorized webhook" });
-    }
-
     const body = req.body || {};
-    // Accept either providerChargeId or orderCode from provider callback
-    const providerChargeId = String(body.providerChargeId || body.chargeId || "").trim();
-    const orderCode = String(body.orderCode || "").trim();
-    const status = String(body.status || body.event || "").toLowerCase();
-    const amount = safeNum(body.amount || body.total || 0);
-
-    if (!providerChargeId && !orderCode) {
-      return res.status(400).json({ message: "Missing providerChargeId or orderCode" });
+    const dataStr = String(body.data || "");
+    const mac = String(body.mac || "");
+    const cfg = zalopayConfig();
+    if (!cfg.key2) {
+      return res.status(500).json({ message: "ZaloPay key2 not configured" });
+    }
+    const expected = crypto.createHmac("sha256", cfg.key2).update(dataStr).digest("hex");
+    if (expected !== mac) {
+      return res.status(401).json({ message: "Invalid mac" });
     }
 
-    // Find order by providerChargeId first, fallback to orderCode
-    const query = providerChargeId ? { "payment.providerChargeId": providerChargeId } : { orderCode };
+    let data = null;
+    try { data = JSON.parse(dataStr); } catch (e) {}
+    if (!data) return res.status(400).json({ message: "Invalid data payload" });
+
+    const appTransId = String(data.app_trans_id || "");
+    // embed_data may include orderCode
+    let embed = {};
+    try { embed = JSON.parse(String(data.embed_data || "{}")); } catch (e) { embed = {}; }
+    const orderCode = String(embed.orderCode || data.order_code || "");
+
+    // Try find by appTransId or orderCode
+    const query = appTransId ? { "payment.appTransId": appTransId } : (orderCode ? { orderCode } : null);
+    if (!query) return res.status(400).json({ message: "Missing identifiers" });
+
     const order = await Order.findOne(query);
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
+    if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // Only handle capture/succeeded events here to mark order as paid.
-    if (status && !(status.includes("capture") || status.includes("paid") || status.includes("succeed") || status.includes("success"))) {
-      // For other events, just return 200 so provider doesn't retry.
-      return res.status(200).json({ message: "Event ignored" });
-    }
+    // If already paid, return OK (idempotent)
+    if (order.payStatus === "paid") return res.status(200).json({ message: "Already paid" });
 
-    // Update order payment snapshot. If amount is missing, do not overwrite existing capturedAmount.
-    const update = {
-      $set: {
-        payStatus: "paid",
-        "payment.provider": "zalopay",
-      },
-    };
-    if (providerChargeId) update.$set["payment.providerChargeId"] = providerChargeId;
-    if (amount > 0) update.$set["payment.capturedAmount"] = amount;
+    const amount = safeNum(data.amount || data.total || 0);
+    const zpTransId = data.zp_trans_id || data.zp_trans_token || "";
 
-    await Order.updateOne({ _id: order._id }, update);
+    await Order.updateOne({ _id: order._id }, { $set: { payStatus: "paid", "payment.provider": "zalopay", "payment.capturedAmount": amount || order.payment?.capturedAmount || 0, "payment.zpTransId": zpTransId } });
+
+    // Cleanup cart according to snapshot
+    await pullCartByOrderSnapshot(order);
 
     return res.status(200).json({ message: "OK" });
   } catch (err) {
@@ -63,33 +92,59 @@ module.exports.webhook = async (req, res) => {
   }
 };
 
-// Client-side confirm endpoint. The frontend can call this after redirecting
-// back from the provider with providerChargeId and orderCode. This is not a
-// replacement for the webhook but helps update DB for redirect-only flows.
+// Client confirm: frontend calls this on redirect return. We call ZaloPay /v2/query to verify.
 module.exports.confirm = async (req, res) => {
   try {
     const body = req.body || {};
-    const providerChargeId = String(body.providerChargeId || body.chargeId || "").trim();
+    const appTransId = String(body.appTransId || body.app_trans_id || "").trim();
     const orderCode = String(body.orderCode || "").trim();
-    const amount = safeNum(body.amount || body.total || 0);
+    const cfg = zalopayConfig();
+    if (!cfg.appId || !cfg.key1) return res.status(500).json({ message: "ZaloPay credentials not configured" });
 
-    if (!orderCode || !providerChargeId) {
-      return res.status(400).json({ message: "Missing orderCode or providerChargeId" });
+    // Determine which appTransId to query: prefer provided, else fetch from order via orderCode
+    let resolvedAppTransId = appTransId;
+    if (!resolvedAppTransId) {
+      if (!orderCode) return res.status(400).json({ message: "Missing appTransId or orderCode" });
+      const order = await Order.findOne({ orderCode }).lean();
+      if (!order) return res.status(404).json({ message: "Order not found" });
+      resolvedAppTransId = order.payment?.appTransId || "";
     }
 
-    const order = await Order.findOne({ orderCode });
+    if (!resolvedAppTransId) return res.status(400).json({ message: "Missing appTransId" });
+
+    // Build query MAC: app_id|app_trans_id|key1
+    const macData = [cfg.appId, resolvedAppTransId, cfg.key1].join("|");
+    const mac = crypto.createHmac("sha256", cfg.key1).update(macData).digest("hex");
+
+    const params = new URLSearchParams();
+    params.set("app_id", String(cfg.appId));
+    params.set("app_trans_id", resolvedAppTransId);
+    params.set("mac", mac);
+
+    const url = `${cfg.domain.replace(/\/$/, "")}/v2/query`;
+    const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data) return res.status(500).json({ message: "ZaloPay query failed" });
+
+    // data.return_code === 1 means success. sub_return_message may include details
+    if (data.return_code !== 1) {
+      return res.status(200).json({ message: "Not paid", data });
+    }
+
+    // Mark order paid and cleanup
+    // app_trans_id may contain orderCode suffix
+    const orderQuery = { "payment.appTransId": resolvedAppTransId };
+    let order = await Order.findOne(orderQuery);
+    if (!order && orderCode) order = await Order.findOne({ orderCode });
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // Only allow confirm for Zalopay orders (defensive)
-    if (order.method !== "zalopay" && !(order.payment && order.payment.provider === "zalopay")) {
-      return res.status(400).json({ message: "Order payment method is not Zalopay" });
+    if (order.payStatus !== "paid") {
+      const amount = safeNum(data.amount || 0);
+      const zpTransId = data.zp_trans_id || data.zp_trans_token || "";
+      await Order.updateOne({ _id: order._id }, { $set: { payStatus: "paid", "payment.provider": "zalopay", "payment.capturedAmount": amount, "payment.zpTransId": zpTransId } });
+      // cleanup cart
+      await pullCartByOrderSnapshot(order);
     }
-
-    // Update DB - do not lower an existing capturedAmount
-    const update = { $set: { payStatus: "paid", "payment.provider": "zalopay", "payment.providerChargeId": providerChargeId } };
-    if (amount > 0) update.$set["payment.capturedAmount"] = amount;
-
-    await Order.updateOne({ _id: order._id }, update);
 
     const updated = await Order.findOne({ _id: order._id }).lean();
     return res.status(200).json({ message: "OK", data: updated });
