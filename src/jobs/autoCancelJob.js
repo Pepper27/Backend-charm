@@ -3,7 +3,9 @@ const Order = require("./models/order.model");
 const RefundJob = require("./models/refundJob.model");
 
 // Auto-cancel orders older than threshold (default 4 days)
-const THRESHOLD_MS = Number(process.env.AUTO_CANCEL_THRESHOLD_MS || 4 * 24 * 60 * 60 * 1000);
+// Default auto-cancel threshold (ms). For Zalopay unpaid orders we will prefer
+// a shorter default to avoid long-held reservations. Can be configured via env.
+const THRESHOLD_MS = Number(process.env.AUTO_CANCEL_THRESHOLD_MS || 30 * 60 * 1000); // 30 minutes
 const BATCH_LIMIT = Number(process.env.AUTO_CANCEL_BATCH_LIMIT || 50);
 
 async function runOnce() {

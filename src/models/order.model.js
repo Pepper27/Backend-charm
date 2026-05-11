@@ -107,6 +107,9 @@ const schema = new mongoose.Schema(
     payment: {
       capturedAmount: { type: Number, default: 0 },
       providerChargeId: { type: String, default: "" },
+      // ZaloPay order query identifiers
+      appTransId: { type: String, default: "" },
+      zpTransId: { type: String, default: "" },
       refundStatus: {
         type: String,
         enum: ["none", "pending", "processing", "succeeded", "failed", "manual_review"],
@@ -131,8 +134,16 @@ const schema = new mongoose.Schema(
     deleted: {
       type: Boolean,
       default: false,
+      },
     },
-  },
+
+    // Snapshot of cart selections at checkout time.
+    // Required for payment flows where cart is cleared only after payment confirmation.
+    checkoutSnapshot: {
+      bundleIds: [String],
+      productLineIds: [String],
+      buyNowVariantIds: [String],
+    },
   {
     timestamps: true,
   }

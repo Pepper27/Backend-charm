@@ -7,6 +7,7 @@ const { ensureGuestIdCookie } = require("../../helper/guest.helper");
 const { validateAndPrice } = require("../../helper/mix-validate.helper");
 const helper = require("../../helper/generate.helper");
 const mailHelper = require("../../helper/mailer.helper");
+const crypto = require("crypto");
 
 const normalizePhone = (value) => String(value || "").trim();
 const normalizeName = (value) => String(value || "").trim();
@@ -43,6 +44,70 @@ const findVariantByCode = (product, code) => {
 const imageForVariant = (variant) => {
   const img = variant?.images?.[0];
   return typeof img === "string" && img.trim() ? img.trim() : "";
+};
+
+const vnYyMmDd = () => {
+  // ZaloPay requires yymmdd in Vietnam timezone (GMT+7)
+  const now = new Date(Date.now() + 7 * 60 * 60 * 1000);
+  const yy = String(now.getUTCFullYear()).slice(-2);
+  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(now.getUTCDate()).padStart(2, "0");
+  return `${yy}${mm}${dd}`;
+};
+
+const zalopayConfig = () => {
+  const appId = String(process.env.ZALOPAY_ID || "").trim();
+  const key1 = String(process.env.ZALOPAYKEY1 || "").trim();
+  const key2 = String(process.env.ZALOPAYKEY2 || "").trim();
+  const domain = String(process.env.ZALOPAYDOMAIN || "https://sb-openapi.zalopay.vn").trim();
+  const callbackUrl = String(process.env.ZALOPAY_CALLBACK_URL || "").trim();
+  const redirectUrl = String(process.env.ZALOPAY_REDIRECT_URL || "").trim();
+  return { appId, key1, key2, domain, callbackUrl, redirectUrl };
+};
+
+const createZaloPayOrder = async ({ orderCode, amount, clientId }) => {
+  const { appId, key1, domain, callbackUrl, redirectUrl } = zalopayConfig();
+  if (!appId || !key1) throw new Error("Missing ZaloPay config (ZALOPAY_ID/ZALOPAYKEY1)");
+
+  const appTransId = `${vnYyMmDd()}_${orderCode}`;
+  const appTime = Date.now();
+  const embed = {
+    redirecturl: redirectUrl || "",
+    // Store orderCode so webhook/return can map without guessing
+    orderCode,
+  };
+  const item = [];
+
+  const params = new URLSearchParams();
+  params.set("app_id", String(appId));
+  params.set("app_trans_id", appTransId);
+  params.set("app_user", clientId || "guest");
+  params.set("app_time", String(appTime));
+  params.set("amount", String(Math.round(Number(amount) || 0)));
+  params.set("item", JSON.stringify(item));
+  params.set("embed_data", JSON.stringify(embed));
+  params.set("description", `Thanh toan don hang ${orderCode}`);
+  if (callbackUrl) params.set("callback_url", callbackUrl);
+
+  const macData = [appId, appTransId, clientId || "guest", String(Math.round(Number(amount) || 0)), String(appTime), JSON.stringify(embed), JSON.stringify(item)].join("|");
+  const mac = crypto.createHmac("sha256", key1).update(macData).digest("hex");
+  params.set("mac", mac);
+
+  const url = `${domain.replace(/\/$/, "")}/v2/create`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok) {
+    throw new Error((data && (data.return_message || data.message)) || `ZaloPay create failed (HTTP ${resp.status})`);
+  }
+  if (!data || data.return_code !== 1) {
+    const msg = data?.sub_return_message || data?.return_message || "ZaloPay create failed";
+    throw new Error(msg);
+  }
+  return { appTransId, orderUrl: data.order_url, zpTransToken: data.zp_trans_token };
 };
 
 const buildOrderComponentLineItems = async ({ bundle, pricingResult }) => {
@@ -234,14 +299,12 @@ module.exports.checkoutBundles = async (req, res) => {
       phone,
       address,
       method,
-      // Payment status & details: for ZaloPay in this environment we treat the
-      // checkout as captured (so admin UI shows paid). In production this should
-      // be set by the payment gateway callback when capture is confirmed.
-      payStatus: method === "zalopay" ? "paid" : "unpaid",
+      // For Zalopay: start as unpaid. Will be marked paid by webhook/confirm.
+      payStatus: "unpaid",
       payment: method === "zalopay" ? {
         provider: "zalopay",
-        capturedAmount: totalPrice,
-        providerChargeId: `ch_demo_${Date.now()}`,
+        capturedAmount: 0,
+        providerChargeId: "",
         refundStatus: "none",
         refunds: [],
       } : undefined,
@@ -269,50 +332,70 @@ module.exports.checkoutBundles = async (req, res) => {
       totalPrice,
       deleted: false,
       checkStatus: false,
+      checkoutSnapshot: {
+        bundleIds: bundleIds.map(String),
+        productLineIds: productLineIds.map(String),
+        buyNowVariantIds: (selectedProductLines || [])
+          .filter((p) => p && p.isBuyNow === true)
+          .map((p) => String(p.variantId || ""))
+          .filter(Boolean),
+      },
     });
 
     await order.save();
 
-    // If method is zalopay, also mark payStatus to paid for newly-created orders
-    // (This is a pragmatic default for demo/local environments; in production
-    // real capture should be set by payment gateway callbacks.)
-    if (method === "zalopay") {
-      await Order.updateOne({ _id: order._id }, { $set: { payStatus: "paid" } });
+    // For cash: clear cart immediately (legacy behavior).
+    // For Zalopay: clear cart only after payment confirmation.
+    if (method !== "zalopay") {
+      const update = {};
+      if (bundleIds.length) update.$pull = { bundles: { bundleId: { $in: bundleIds } } };
+      if (productLineIds.length) update.$pull = update.$pull || {};
+      if (productLineIds.length) update.$pull.products = { _id: { $in: productLineIds } };
+
+      // Buy-now behavior: if any selected product line is a temporary buyNow line,
+      // remove ALL cart product lines that share the same variantId(s).
+      const selectedBuyNowVariantIds = (selectedProductLines || [])
+        .filter((p) => p && p.isBuyNow === true)
+        .map((p) => String(p.variantId || ""))
+        .filter(Boolean);
+
+      if (selectedBuyNowVariantIds.length) {
+        update.$pull = update.$pull || {};
+        const existing = update.$pull.products || {};
+        update.$pull.products = {
+          $or: [
+            ...(existing && Object.keys(existing).length ? [existing] : []),
+            { variantId: { $in: selectedBuyNowVariantIds } },
+          ],
+        };
+      }
+
+      if (Object.keys(update).length) {
+        await Cart.updateOne(cartKey, update);
+      }
+
+      return res.status(201).json({ message: "Tạo đơn hàng thành công", data: order });
     }
 
-    // Clear selected bundles and product lines from cart.
-    const update = {};
-    if (bundleIds.length) update.$pull = { bundles: { bundleId: { $in: bundleIds } } };
-    if (productLineIds.length) update.$pull = update.$pull || {};
-    if (productLineIds.length) update.$pull.products = { _id: { $in: productLineIds } };
-
-    // Buy-now behavior: if any selected product line is a temporary buyNow line,
-    // remove ALL cart product lines that share the same variantId(s).
-    // This ensures the variant disappears completely from cart after a successful buyNow checkout.
-    const selectedBuyNowVariantIds = (selectedProductLines || [])
-      .filter((p) => p && p.isBuyNow === true)
-      .map((p) => String(p.variantId || ""))
-      .filter(Boolean);
-
-    if (selectedBuyNowVariantIds.length) {
-      update.$pull = update.$pull || {};
-      // Merge with the existing pull condition if present.
-      const existing = update.$pull.products || {};
-      // Use $or so we keep the id-based pull and add variantId-based pull.
-      update.$pull.products = {
-        $or: [
-          ...(existing && Object.keys(existing).length ? [existing] : []),
-          { variantId: { $in: selectedBuyNowVariantIds } },
-        ],
-      };
-    }
-    if (Object.keys(update).length) {
-      await Cart.updateOne(cartKey, update);
-    }
-
+    // ZaloPay: create payment order and return order_url for redirect.
+    const clientId = req.client?._id ? String(req.client._id) : String(guestId || "guest");
+    const zlp = await createZaloPayOrder({ orderCode: order.orderCode, amount: totalPrice, clientId });
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          "payment.appTransId": zlp.appTransId,
+        },
+      }
+    );
+    const updated = await Order.findOne({ _id: order._id }).lean();
     return res.status(201).json({
       message: "Tạo đơn hàng thành công",
-      data: order,
+      data: updated,
+      zalopay: {
+        appTransId: zlp.appTransId,
+        orderUrl: zlp.orderUrl,
+      },
     });
   } catch (error) {
     return res.status(500).json({ message: "Lỗi khi tạo đơn hàng", error: error.message });
