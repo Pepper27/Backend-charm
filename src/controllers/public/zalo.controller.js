@@ -30,7 +30,7 @@ const pullCartByOrderSnapshot = async (order) => {
       update.$pull = update.$pull || {};
       const existing = update.$pull.products || {};
       update.$pull.products = {
-        $or: [ ...(existing && Object.keys(existing).length ? [existing] : []), { variantId: { $in: buyNowVariantIds } } ],
+        $or: [...(existing && Object.keys(existing).length ? [existing] : []), { variantId: { $in: buyNowVariantIds } }],
       };
     }
 
@@ -58,10 +58,13 @@ module.exports.webhook = async (req, res) => {
     }
 
     let data = null;
-    try { data = JSON.parse(dataStr); } catch (e) {}
+    try { data = JSON.parse(dataStr); } catch (e) { }
     if (!data) return res.status(400).json({ message: "Invalid data payload" });
+    console.log("ZALOPAY WEBHOOK DATA:", data);
 
     const appTransId = String(data.app_trans_id || "");
+
+    console.log("APP TRANS ID:", appTransId);
     // embed_data may include orderCode
     let embed = {};
     try { embed = JSON.parse(String(data.embed_data || "{}")); } catch (e) { embed = {}; }
@@ -72,6 +75,7 @@ module.exports.webhook = async (req, res) => {
     if (!query) return res.status(400).json({ message: "Missing identifiers" });
 
     const order = await Order.findOne(query);
+    console.log("ORDER FOUND:", order);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     // If already paid, return OK (idempotent)
@@ -80,8 +84,52 @@ module.exports.webhook = async (req, res) => {
     const amount = safeNum(data.amount || data.total || 0);
     const zpTransId = data.zp_trans_id || data.zp_trans_token || "";
 
-    await Order.updateOne({ _id: order._id }, { $set: { payStatus: "paid", "payment.provider": "zalopay", "payment.capturedAmount": amount || order.payment?.capturedAmount || 0, "payment.zpTransId": zpTransId } });
+    //await Order.updateOne({ _id: order._id }, { $set: { payStatus: "paid", "payment.provider": "zalopay", "payment.capturedAmount": amount || order.payment?.capturedAmount || 0, "payment.zpTransId": zpTransId } });
+    // await Order.updateOne(
+    //   { _id: order._id },
+    //   {
+    //     $set: {
+    //       payStatus: "paid",
+    //       status: "confirmed",
+    //       "payment.provider": "zalopay",
+    //       "payment.capturedAmount":
+    //         amount || order.payment?.capturedAmount || 0,
+    //       "payment.zpTransId": zpTransId,
+    //     },
+    //     $push: {
+    //       statusHistory: {
+    //         status: "confirmed",
+    //         changedAt: new Date(),
+    //         changedBy: "system",
+    //         note: "ZaloPay payment success",
+    //       },
+    //     },
+    //   }
+    // );
+    // Thay đoạn update cũ bằng đoạn này:
+    const result = await Order.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          payStatus: "paid",
+          status: "confirmed",
+          "payment.provider": "zalopay",
+          "payment.capturedAmount": amount || order.totalPrice || 0, // Dùng totalPrice nếu amount từ zalo bị trống
+          "payment.zpTransId": zpTransId,
+          "payment.appTransId": appTransId // Cập nhật ngược lại ID này nếu trong DB chưa có
+        },
+        $push: {
+          statusHistory: {
+            status: "confirmed",
+            changedAt: new Date(),
+            changedBy: "system",
+            note: "ZaloPay payment success (Manual Test)",
+          },
+        },
+      }
+    );
 
+    console.log("KẾT QUẢ UPDATE DB:", result); // Dòng này cực kỳ quan trọng để check
     // Cleanup cart according to snapshot
     await pullCartByOrderSnapshot(order);
 
@@ -141,7 +189,27 @@ module.exports.confirm = async (req, res) => {
     if (order.payStatus !== "paid") {
       const amount = safeNum(data.amount || 0);
       const zpTransId = data.zp_trans_id || data.zp_trans_token || "";
-      await Order.updateOne({ _id: order._id }, { $set: { payStatus: "paid", "payment.provider": "zalopay", "payment.capturedAmount": amount, "payment.zpTransId": zpTransId } });
+      //await Order.updateOne({ _id: order._id }, { $set: { payStatus: "paid", "payment.provider": "zalopay", "payment.capturedAmount": amount, "payment.zpTransId": zpTransId } });
+      await Order.updateOne(
+        { _id: order._id },
+        {
+          $set: {
+            payStatus: "paid",
+            status: "confirmed",
+            "payment.provider": "zalopay",
+            "payment.capturedAmount": amount,
+            "payment.zpTransId": zpTransId,
+          },
+          $push: {
+            statusHistory: {
+              status: "confirmed",
+              changedAt: new Date(),
+              changedBy: "system",
+              note: "ZaloPay confirm success",
+            },
+          },
+        }
+      );
       // cleanup cart
       await pullCartByOrderSnapshot(order);
     }

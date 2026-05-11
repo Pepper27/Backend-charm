@@ -7,7 +7,9 @@ const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$
 const inferPayStatus = (o) => {
   try {
     if (!o) return "unpaid";
-    if (o.payStatus) return o.payStatus;
+    // If explicitly marked paid in DB, respect it.
+    if (o.payStatus === "paid") return "paid";
+    // Otherwise, infer paid from method/provider/captured amount.
     const method = String(o.method || "").trim().toLowerCase();
     const provider = String((o.payment && o.payment.provider) || "").trim().toLowerCase();
     const captured = Number((o.payment && o.payment.capturedAmount) || 0);
@@ -129,7 +131,7 @@ module.exports.getOrderById = async (req, res) => {
       return res.status(404).json({ message: "Đơn hàng không tồn tại" });
     }
     // ensure payStatus is present for UI convenience
-    order.payStatus = order.payStatus || inferPayStatus(order);
+    order.payStatus = order.payStatus === "paid" ? "paid" : inferPayStatus(order);
     return res.status(200).json({ data: order });
   } catch (error) {
     return res.status(500).json({ message: "Lỗi khi lấy chi tiết đơn hàng", error: error.message });
