@@ -285,6 +285,27 @@ module.exports.checkoutBundles = async (req, res) => {
     if (bundleIds.length) update.$pull = { bundles: { bundleId: { $in: bundleIds } } };
     if (productLineIds.length) update.$pull = update.$pull || {};
     if (productLineIds.length) update.$pull.products = { _id: { $in: productLineIds } };
+
+    // Buy-now behavior: if any selected product line is a temporary buyNow line,
+    // remove ALL cart product lines that share the same variantId(s).
+    // This ensures the variant disappears completely from cart after a successful buyNow checkout.
+    const selectedBuyNowVariantIds = (selectedProductLines || [])
+      .filter((p) => p && p.isBuyNow === true)
+      .map((p) => String(p.variantId || ""))
+      .filter(Boolean);
+
+    if (selectedBuyNowVariantIds.length) {
+      update.$pull = update.$pull || {};
+      // Merge with the existing pull condition if present.
+      const existing = update.$pull.products || {};
+      // Use $or so we keep the id-based pull and add variantId-based pull.
+      update.$pull.products = {
+        $or: [
+          ...(existing && Object.keys(existing).length ? [existing] : []),
+          { variantId: { $in: selectedBuyNowVariantIds } },
+        ],
+      };
+    }
     if (Object.keys(update).length) {
       await Cart.updateOne(cartKey, update);
     }

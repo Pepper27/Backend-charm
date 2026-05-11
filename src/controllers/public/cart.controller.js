@@ -6,10 +6,26 @@ const { validateAndPrice } = require("../../helper/mix-validate.helper");
 module.exports.getCart = async (req, res) => {
   try {
     const guestId = ensureGuestIdCookie(req, res);
-    const cart = req.client?._id
+    const cartKey = req.client?._id ? { userId: String(req.client._id) } : { guestId };
+    const cart = await Cart.findOne(cartKey).lean();
+
+    // Best-effort cleanup: remove abandoned buyNow lines older than 30 minutes.
+    if (cart && Array.isArray(cart.products) && cart.products.length) {
+      try {
+        const cutoff = new Date(Date.now() - 30 * 60 * 1000);
+        await Cart.updateOne(cartKey, {
+          $pull: { products: { isBuyNow: true, createdAt: { $lt: cutoff } } },
+        });
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+
+    const refreshed = req.client?._id
       ? await Cart.findOne({ userId: String(req.client._id) }).lean()
       : await Cart.findOne({ guestId }).lean();
-    return res.status(200).json({ data: cart || { guestId, products: [], bundles: [] } });
+
+    return res.status(200).json({ data: refreshed || { guestId, products: [], bundles: [] } });
   } catch (error) {
     return res.status(500).json({ message: "Server error", error: error.message });
   }
@@ -74,7 +90,7 @@ module.exports.addBundleToCart = async (req, res) => {
 module.exports.addProductToCart = async (req, res) => {
   try {
     const guestId = ensureGuestIdCookie(req, res);
-    const { productId, variantId, quantity } = req.body || {};
+    const { productId, variantId, quantity, buyNow } = req.body || {};
 
     if (!productId) return res.status(400).json({ message: "Missing productId" });
     const qty = Number.isFinite(Number(quantity)) ? Math.max(1, Number(quantity)) : 1;
@@ -110,22 +126,44 @@ module.exports.addProductToCart = async (req, res) => {
       cart = new Cart(initial);
     }
 
-    // Find existing line
-    const idx = (cart.products || []).findIndex((p) => String(p.productId) === String(product._id) && String(p.variantId) === String(variant._id));
-    if (idx !== -1) {
-      cart.products[idx].quantity = (Number(cart.products[idx].quantity) || 0) + qty;
-      cart.products[idx].price = Number(price);
-    } else {
-      const newLine = { productId: product._id, variantId: variant._id, quantity: qty, price };
+    // If buyNow requested, create a separate temporary line (quantity forced to 1).
+    // Do not merge into the existing cart line.
+    let createdLineId = null;
+    if (buyNow === true) {
+      const newLine = {
+        productId: product._id,
+        variantId: variant._id,
+        quantity: 1,
+        price,
+        isBuyNow: true,
+        createdAt: new Date(),
+      };
       cart.products.push(newLine);
+      // Use the actual mongoose subdocument id assigned on push
+      const pushed = cart.products[cart.products.length - 1];
+      createdLineId = pushed && pushed._id ? String(pushed._id) : null;
+    } else {
+      // Find existing line
+      const idx = (cart.products || []).findIndex((p) => String(p.productId) === String(product._id) && String(p.variantId) === String(variant._id));
+      if (idx !== -1) {
+        cart.products[idx].quantity = (Number(cart.products[idx].quantity) || 0) + qty;
+        cart.products[idx].price = Number(price);
+      } else {
+        const newLine = { productId: product._id, variantId: variant._id, quantity: qty, price, isBuyNow: false, createdAt: new Date() };
+        cart.products.push(newLine);
+      }
     }
 
     await cart.save();
 
-    // find the line id we last touched (match by productId+variantId)
+    // find the line id we last touched
     const savedCart = cart.toObject ? cart.toObject() : cart;
-    const found = (savedCart.products || []).find((p) => String(p.productId) === String(product._id) && String(p.variantId) === String(variant._id));
-    const lineId = found ? String(found._id) : null;
+    let lineId = createdLineId;
+    if (!lineId) {
+      // match by productId+variantId; prefer non-buyNow lines when not explicitly requested
+      const found = (savedCart.products || []).find((p) => String(p.productId) === String(product._id) && String(p.variantId) === String(variant._id));
+      lineId = found ? String(found._id) : null;
+    }
 
     return res.status(200).json({ data: savedCart, lineId });
   } catch (error) {
