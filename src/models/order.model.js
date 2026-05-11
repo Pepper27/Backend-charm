@@ -134,8 +134,7 @@ const schema = new mongoose.Schema(
     deleted: {
       type: Boolean,
       default: false,
-      },
-    },
+    }, // Xóa dấu ngoặc nhọn dư thừa ở đây
 
     // Snapshot of cart selections at checkout time.
     // Required for payment flows where cart is cleared only after payment confirmation.
@@ -144,9 +143,11 @@ const schema = new mongoose.Schema(
       productLineIds: [String],
       buyNowVariantIds: [String],
     },
+  }, // Đây mới là dấu đóng của Schema
   {
     timestamps: true,
   }
 );
+
 const Order = mongoose.model("Order", schema, "orders");
 module.exports = Order;
