@@ -61,6 +61,11 @@ const schema = new mongoose.Schema(
         variantId: String,
         quantity: Number,
         price: Number,
+        // When true, this line is a temporary "Buy Now" line.
+        // It should not be merged with regular cart lines.
+        isBuyNow: { type: Boolean, default: false },
+        // Per-line timestamp so we can clean up abandoned buyNow lines.
+        createdAt: { type: Date, default: Date.now },
       },
     ],
 
