@@ -7,9 +7,9 @@ const collectionsController = require("../../../controllers/v1/public/collection
 const { requireAuth } = require("../../../middlewares/auth/bearer.middleware");
 
 router.get("/categories", categoriesController.list);
-
 router.get("/collections", collectionsController.list);
 router.get("/products", productsController.list);
+router.get("/products/collection/:collectionId", productsController.list);
 router.get("/products/best-sellers", productsController.getBestSellers);
 router.get("/products/:id", productsController.getById);
 router.get("/products/slug/:slug", productsController.getBySlug);
