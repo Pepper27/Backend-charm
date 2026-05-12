@@ -24,5 +24,5 @@ const schema = new mongoose.Schema(
     timestamps: true,
   }
 );
-const New = mongoose.model("New", schema, "news");
-module.exports = New;
+const Blog = mongoose.model("Blog", schema, "blogs");
+module.exports = Blog;
