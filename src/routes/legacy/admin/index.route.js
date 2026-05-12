@@ -14,6 +14,9 @@ const authMiddleware = require("../../../middlewares/admin/auth.middleware");
 const materialRouter = require("./material.route");
 const colorRouter = require("./color.route");
 const sizeRouter = require("./size.route");
+const blogRouter = require("./blog.route");
+
+router.use("/blogs", authMiddleware.verifyToken, blogRouter);
 router.use("/account", accountAdminRouter);
 router.use("/categories", authMiddleware.verifyToken, categoryRouter);
 router.use("/products", authMiddleware.verifyToken, productRoute);
