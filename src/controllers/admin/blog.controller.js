@@ -87,7 +87,7 @@ module.exports.getBlogById = async (req, res) => {
 module.exports.createBlog = async (req, res) => {
   try {
     const { name } = req.body;
-    const description = req.body.description || req.body.desc || "";
+    const content = req.body.content || "";
     if (!String(name || "").trim()) {
       return res.status(400).json({ success: false, message: "Tên bài viết là bắt buộc!" });
     }
@@ -103,7 +103,7 @@ module.exports.createBlog = async (req, res) => {
 
     const newBlog = new Blog({
       name: String(name).trim(),
-      description,
+      content,
       avatar,
       createdBy,
       updatedBy,
@@ -151,8 +151,8 @@ module.exports.updateBlogById = async (req, res) => {
       updatedAt: Date.now(),
     };
 
-    if (updateData.desc !== undefined && updateData.description === undefined) {
-      updateData.description = updateData.desc;
+    if (updateData.desc !== undefined && updateData.content === undefined) {
+      updateData.content = updateData.desc;
     }
     delete updateData.desc;
 
