@@ -8,6 +8,10 @@ const schema = new mongoose.Schema(
     email: { type: String, default: "", index: true },
     phone: { type: String, default: "" },
     password: { type: String, default: "" },
+    // Social login identifiers (optional)
+    googleId: { type: String, default: "", index: true },
+    facebookId: { type: String, default: "", index: true },
+    avatarUrl: { type: String, default: "" },
     deleted: { type: Boolean, default: false },
   },
   { timestamps: true }

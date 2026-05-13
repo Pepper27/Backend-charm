@@ -56,5 +56,7 @@ router.get("/auth/me", authController.me);
 router.post("/auth/logout", authController.logout);
 router.post("/auth/forgot-password", authController.forgotPassword);
 router.post("/auth/reset-password", authController.resetPassword);
+router.post("/auth/oauth/google", authController.oauthGoogle);
+router.post("/auth/oauth/facebook", authController.oauthFacebook);
 
 module.exports = router;
