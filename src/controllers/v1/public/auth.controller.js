@@ -2,6 +2,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const AccountClient = require("../../../models/accountClient.model");
 const v1 = require("../../../helper/v1-response.helper");
+const RecentlyViewed = require("../../../models/recentlyViewed.model");
+const { COOKIE_NAME } = require("../../../helper/guest.helper");
 
 // POST /api/v1/public/auth/login
 module.exports.login = async (req, res) => {
@@ -26,6 +28,44 @@ module.exports.login = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
+
+    // Merge guest recently-viewed into user after successful login.
+    try {
+      const guestId = req.cookies?.[COOKIE_NAME];
+      if (guestId && typeof guestId === "string" && guestId.trim()) {
+        const guestItems = await RecentlyViewed.find({ guestId: String(guestId) })
+          .sort({ viewedAt: -1 })
+          .limit(50)
+          .lean();
+
+        for (const it of guestItems) {
+          await RecentlyViewed.findOneAndUpdate(
+            { userId: user._id, productId: it.productId },
+            {
+              $set: {
+                viewedAt: it.viewedAt || new Date(),
+                variantCode: String(it.variantCode || ""),
+              },
+              $setOnInsert: { userId: user._id, productId: it.productId },
+            },
+            { upsert: true, new: false }
+          );
+        }
+
+        await RecentlyViewed.deleteMany({ guestId: String(guestId) });
+
+        const extra = await RecentlyViewed.find({ userId: user._id })
+          .sort({ viewedAt: -1 })
+          .skip(50)
+          .select("_id")
+          .lean();
+        if (extra?.length) {
+          await RecentlyViewed.deleteMany({ _id: { $in: extra.map((d) => d._id) } });
+        }
+      }
+    } catch {
+      // best-effort merge only
+    }
 
     return v1.ok(res, {
       accessToken,

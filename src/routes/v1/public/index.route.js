@@ -4,7 +4,8 @@ const categoriesController = require("../../../controllers/v1/public/categories.
 const productsController = require("../../../controllers/v1/public/products.controller");
 const authController = require("../../../controllers/v1/public/auth.controller");
 const collectionsController = require("../../../controllers/v1/public/collections.controller");
-const { requireAuth } = require("../../../middlewares/auth/bearer.middleware");
+const recentlyViewedController = require("../../../controllers/v1/public/recentlyViewed.controller");
+const { requireAuth, optionalAuth } = require("../../../middlewares/auth/bearer.middleware");
 
 router.get("/categories", categoriesController.list);
 router.get("/collections", collectionsController.list);
@@ -16,5 +17,8 @@ router.get("/products/slug/:slug", productsController.getBySlug);
 
 router.post("/auth/login", authController.login);
 router.get("/auth/me", requireAuth, authController.me);
+
+router.get("/recently-viewed", optionalAuth, recentlyViewedController.list);
+router.post("/recently-viewed", optionalAuth, recentlyViewedController.track);
 
 module.exports = router;
