@@ -97,7 +97,9 @@ module.exports.createCollection = async (req, res) => {
       return res.status(400).json({ success: false, message: "Tên bộ sưu tập đã tồn tại!" });
     }
 
-    const avatar = req.file ? req.file.path : undefined;
+    const avatar = req.files?.avatar?.[0]?.path;
+    const video = req.files?.video?.[0]?.path;
+    const poster = req.files?.poster?.[0]?.path;
     const createdBy = req.account?.id;
     const updatedBy = req.account?.id;
 
@@ -105,6 +107,8 @@ module.exports.createCollection = async (req, res) => {
       name: String(name).trim(),
       description,
       avatar,
+      video,
+      poster,
       createdBy,
       updatedBy,
     });
@@ -143,10 +147,14 @@ module.exports.updateCollectionById = async (req, res) => {
       }
     }
 
-    const avatar = req.file ? req.file.path : old.avatar;
+    const avatar = req.files?.avatar?.[0]?.path || old.avatar;
+    const video = req.files?.video?.[0]?.path || old.video;
+    const poster = req.files?.poster?.[0]?.path || old.poster;
     const updateData = {
       ...req.body,
       avatar,
+      video,
+      poster,
       updatedBy: req.account?.id,
       updatedAt: Date.now(),
     };
