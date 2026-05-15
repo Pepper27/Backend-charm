@@ -8,6 +8,7 @@ const Material = require("../../models/material.model");
 const Color = require("../../models/color.model");
 const Size = require("../../models/size.model");
 const Theme = require("../../models/theme.model");
+const Category = require("../../models/category.model");
 
 const withTimeout = (query, ms = 8000) => {
   if (!query?.maxTimeMS) return query;
@@ -22,6 +23,42 @@ const parseJsonField = (value, fallback) => {
 };
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Category.parent is stored as a stringified ObjectId in this codebase.
+// Collect all descendant category ids (including the roots themselves).
+const collectDescendantCategoryIds = async (rootIds) => {
+  const roots = (Array.isArray(rootIds) ? rootIds : [rootIds])
+    .map((v) => String(v || "").trim())
+    .filter((v) => mongoose.Types.ObjectId.isValid(v));
+  if (!roots.length) return [];
+
+  const seen = new Set(roots);
+  let frontier = [...roots];
+
+  while (frontier.length) {
+    const batch = frontier;
+    frontier = [];
+
+    const children = await Category.find({ deleted: false, parent: { $in: batch } })
+      .select("_id parent")
+      .lean();
+
+    for (const c of children || []) {
+      const id = String(c?._id || "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      frontier.push(id);
+    }
+  }
+
+  return [...seen].map((id) => new mongoose.Types.ObjectId(id));
+};
+
+const toStringArray = (value) => {
+  if (value === undefined || value === null || value === "") return [];
+  if (Array.isArray(value)) return value.map(String);
+  return [String(value)];
+};
 
 const calculateStockStatus = (product) => {
   const totalStock = (product?.variants || []).reduce((sum, v) => sum + (v?.quantity || 0), 0);
@@ -114,11 +151,25 @@ module.exports.getProducts = async (req, res) => {
       }
     }
     if (categoryId) {
-      const categoryValue = String(categoryId).trim();
-      if (!mongoose.Types.ObjectId.isValid(categoryValue)) {
+      // Support:
+      // 1) single value: categoryId=<id>
+      // 2) repeated keys: categoryId=<id>&categoryId=<id2>
+      // 3) CSV: categoryId=<id>,<id2>
+      const raw = toStringArray(categoryId)
+        .flatMap((v) => String(v || "").split(","))
+        .map((v) => String(v || "").trim())
+        .filter(Boolean);
+
+      const invalid = raw.find((v) => !mongoose.Types.ObjectId.isValid(v));
+      if (invalid) {
         return res.status(400).json({ message: "categoryId không hợp lệ" });
       }
-      find.category = new mongoose.Types.ObjectId(categoryValue);
+
+      // Expand to include descendants for each selected category.
+      const categoryIds = await collectDescendantCategoryIds(raw);
+      if (categoryIds.length) {
+        find.category = { $in: categoryIds };
+      }
     }
 
     if (collectionId) {
