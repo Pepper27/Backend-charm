@@ -193,6 +193,7 @@ module.exports.list = async (req, res) => {
     // Support incoming CSV values that may be _id (ObjectId) or names. If _id provided,
     // lookup the corresponding name in admin collections and use the name to match legacy text fields.
     const stringFacetKeys = ["materials", "colors", "sizes"];
+    const stringFacetAnd = [];
     for (const key of stringFacetKeys) {
       const vals = toIdArray(filters[key]);
       if (vals.length > 0) {
@@ -203,6 +204,9 @@ module.exports.list = async (req, res) => {
         const objIds = vals
           .filter((v) => mongoose.Types.ObjectId.isValid(v))
           .map((v) => new mongoose.Types.ObjectId(v));
+        const rawIdStrings = vals
+          .filter((v) => mongoose.Types.ObjectId.isValid(v))
+          .map((v) => String(v));
         const plain = vals
           .filter((v) => !mongoose.Types.ObjectId.isValid(v))
           .map(String)
@@ -211,23 +215,29 @@ module.exports.list = async (req, res) => {
         if (objIds.length) {
           const docs = await Model.find({ _id: { $in: objIds }, deleted: false }).lean();
           const docNames = docs.map((d) => String(d.name));
-          stringValues = [...new Set([...plain, ...docNames])];
+          // Keep both ids and names in case product legacy fields store either.
+          stringValues = [...new Set([...plain, ...rawIdStrings, ...docNames])];
         } else {
           stringValues = plain;
         }
 
         if (stringValues.length > 0) {
           // Match in options array (e.g., "options.materials")
-          const optionsPath = `options.${key.slice(0, -1)}`; // "materials" -> "options.material"
+          // Note: product.options uses plural keys: materials/colors/sizes
+          const optionsPath = `options.${key}`;
           // Match in variants (e.g., "variants.material")
           const variantPath = `variants.${key.slice(0, -1)}`; // "materials" -> "variants.material"
-          if (!match.$or) match.$or = [];
-          match.$or.push(
-            { [optionsPath]: { $in: stringValues } },
-            { [variantPath]: { $in: stringValues } }
-          );
+          stringFacetAnd.push({
+            $or: [
+              { [optionsPath]: { $in: stringValues } },
+              { [variantPath]: { $in: stringValues } },
+            ],
+          });
         }
       }
+    }
+    if (stringFacetAnd.length) {
+      match.$and = match.$and ? match.$and.concat(stringFacetAnd) : stringFacetAnd;
     }
 
     // Price filter: we use precomputed priceMin/priceMax on product document.
@@ -378,15 +388,16 @@ module.exports.list = async (req, res) => {
 
       const sizesCsvRaw = toArray(req.query.sizes || filters.sizes);
       const colorsCsvRaw = toArray(req.query.colors || filters.colors);
-      const materialsCsvRaw = toArray(
-        req.query.materials || filters.materials || filters.materials
-      );
+      const materialsCsvRaw = toArray(req.query.materials || filters.materials);
       // Translate any incoming ids into names for matching legacy product fields
       const translate = async (rawArr, Model) => {
         if (!rawArr || !rawArr.length) return [];
         const objIds = rawArr
           .filter((v) => mongoose.Types.ObjectId.isValid(v))
           .map((v) => new mongoose.Types.ObjectId(v));
+        const rawIdStrings = rawArr
+          .filter((v) => mongoose.Types.ObjectId.isValid(v))
+          .map((v) => String(v));
         const names = rawArr
           .filter((v) => !mongoose.Types.ObjectId.isValid(v))
           .map((s) => String(s).trim())
@@ -394,7 +405,7 @@ module.exports.list = async (req, res) => {
         if (!objIds.length) return names;
         const docs = await Model.find({ _id: { $in: objIds }, deleted: false }).lean();
         const docNames = docs.map((d) => String(d.name));
-        return [...new Set([...names, ...docNames])];
+        return [...new Set([...names, ...rawIdStrings, ...docNames])];
       };
 
       const sizesCsv = await translate(sizesCsvRaw, Size);
@@ -403,27 +414,38 @@ module.exports.list = async (req, res) => {
       const inStockCsv = toArray(req.query.inStock || filters.inStock);
       const priceRangesCsv = toArray(req.query.priceRanges || filters.priceRanges);
 
-      // apply materials/colors/sizes filters into facetMatch similar to above logic
-      if (materialsCsv.length) {
-        facetMatch.$or = facetMatch.$or || [];
-        facetMatch.$or.push(
-          { "options.material": { $in: materialsCsv } },
-          { "variants.material": { $in: materialsCsv } }
-        );
-      }
-      if (colorsCsv.length) {
-        facetMatch.$or = facetMatch.$or || [];
-        facetMatch.$or.push(
-          { "options.color": { $in: colorsCsv } },
-          { "variants.color": { $in: colorsCsv } }
-        );
-      }
-      if (sizesCsv.length) {
-        facetMatch.$or = facetMatch.$or || [];
-        facetMatch.$or.push(
-          { "options.size": { $in: sizesCsv } },
-          { "variants.size": { $in: sizesCsv } }
-        );
+      // apply materials/colors/sizes filters into facetMatch similar to above logic.
+      // IMPORTANT: use $and across facet keys, with an $or within each key.
+      const andClauses = [];
+      const clauseMaterials = materialsCsv.length
+        ? {
+            $or: [
+              { "options.materials": { $in: materialsCsv } },
+              { "variants.material": { $in: materialsCsv } },
+            ],
+          }
+        : null;
+      const clauseColors = colorsCsv.length
+        ? {
+            $or: [
+              { "options.colors": { $in: colorsCsv } },
+              { "variants.color": { $in: colorsCsv } },
+            ],
+          }
+        : null;
+      const clauseSizes = sizesCsv.length
+        ? {
+            $or: [
+              { "options.sizes": { $in: sizesCsv } },
+              { "variants.size": { $in: sizesCsv } },
+            ],
+          }
+        : null;
+      if (clauseMaterials) andClauses.push(clauseMaterials);
+      if (clauseColors) andClauses.push(clauseColors);
+      if (clauseSizes) andClauses.push(clauseSizes);
+      if (andClauses.length) {
+        facetMatch.$and = facetMatch.$and ? facetMatch.$and.concat(andClauses) : andClauses;
       }
 
       // Handle priceRanges CSV: these are keys like 'under_500k','500k_1m','above_1m'
@@ -471,20 +493,153 @@ module.exports.list = async (req, res) => {
       const sizeMap = makeCountMap(rawAggregated.sizes);
       const collMap = makeCountMap(rawAggregated.collections || []);
 
+      // Disjunctive faceting for materials/colors/sizes:
+      // count(option) = number of products if we add that option to the current selection
+      // (within the same facet). This avoids negative jumps for multi-select OR.
+      const buildStringFacetMatch = (vals) => ({
+        $or: [
+          { "options.materials": { $in: vals } },
+          { "variants.material": { $in: vals } },
+        ],
+      });
+
+      const buildColorFacetMatch = (vals) => ({
+        $or: [
+          { "options.colors": { $in: vals } },
+          { "variants.color": { $in: vals } },
+        ],
+      });
+
+      const buildSizeFacetMatch = (vals) => ({
+        $or: [
+          { "options.sizes": { $in: vals } },
+          { "variants.size": { $in: vals } },
+        ],
+      });
+
+      const disjunctiveCounts = async ({
+        baseMatch,
+        selectedVals,
+        allDocs,
+        getDocVals,
+        buildFacetClause,
+      }) => {
+        const selected = Array.isArray(selectedVals) ? selectedVals.filter(Boolean) : [];
+        const selectedSet = new Set(selected.map(String));
+        const selectedClause = selected.length ? buildFacetClause(selected) : null;
+
+        // currentTotal = results for current selection (for already-selected options)
+        let currentTotal = 0;
+        if (selectedClause) {
+          currentTotal = await Product.countDocuments({
+            ...baseMatch,
+            $and: (baseMatch.$and || []).concat([selectedClause]),
+          });
+        }
+
+        // For each option: count = currentTotal + extra(option)
+        // where extra(option) counts docs matching option but NOT matching current selected set.
+        // If option already selected, extra=0 and count=currentTotal.
+        const out = new Map();
+        const tasks = (allDocs || []).map(async (d) => {
+          const id = String(d?._id || "");
+          const name = String(d?.name || "");
+          const vals = getDocVals(d);
+          if (selectedSet.has(id) || selectedSet.has(name)) {
+            out.set(id, currentTotal);
+            return;
+          }
+          if (!vals.length) {
+            out.set(id, currentTotal);
+            return;
+          }
+          const optionClause = buildFacetClause(vals);
+          const andParts = (baseMatch.$and || []).slice();
+          andParts.push(optionClause);
+          if (selectedClause) {
+            // exclude docs already included by current selection
+            andParts.push({ $nor: [selectedClause] });
+          }
+          const extra = await Product.countDocuments({
+            ...baseMatch,
+            $and: andParts,
+          });
+          out.set(id, currentTotal + extra);
+        });
+        await Promise.all(tasks);
+        return out;
+      };
+
+      // Build base matches without each facet key.
+      const baseWithoutMaterials = { ...facetMatch };
+      if (clauseMaterials && Array.isArray(baseWithoutMaterials.$and)) {
+        baseWithoutMaterials.$and = baseWithoutMaterials.$and.filter((c) => c !== clauseMaterials);
+        if (!baseWithoutMaterials.$and.length) delete baseWithoutMaterials.$and;
+      }
+      const baseWithoutColors = { ...facetMatch };
+      if (clauseColors && Array.isArray(baseWithoutColors.$and)) {
+        baseWithoutColors.$and = baseWithoutColors.$and.filter((c) => c !== clauseColors);
+        if (!baseWithoutColors.$and.length) delete baseWithoutColors.$and;
+      }
+      const baseWithoutSizes = { ...facetMatch };
+      if (clauseSizes && Array.isArray(baseWithoutSizes.$and)) {
+        baseWithoutSizes.$and = baseWithoutSizes.$and.filter((c) => c !== clauseSizes);
+        if (!baseWithoutSizes.$and.length) delete baseWithoutSizes.$and;
+      }
+
+      const [matDisjMap, colorDisjMap, sizeDisjMap] = await Promise.all([
+        disjunctiveCounts({
+          baseMatch: baseWithoutMaterials,
+          selectedVals: materialsCsv,
+          allDocs: allMaterials,
+          getDocVals: (m) => {
+            const id = String(m?._id || "");
+            const name = String(m?.name || "");
+            return [id, name].filter(Boolean);
+          },
+          buildFacetClause: buildStringFacetMatch,
+        }),
+        disjunctiveCounts({
+          baseMatch: baseWithoutColors,
+          selectedVals: colorsCsv,
+          allDocs: allColors,
+          getDocVals: (c) => {
+            const id = String(c?._id || "");
+            const name = String(c?.name || "");
+            return [id, name].filter(Boolean);
+          },
+          buildFacetClause: buildColorFacetMatch,
+        }),
+        disjunctiveCounts({
+          baseMatch: baseWithoutSizes,
+          selectedVals: sizesCsv,
+          allDocs: allSizes,
+          getDocVals: (s) => {
+            const id = String(s?._id || "");
+            const name = String(s?.name || "");
+            return [id, name].filter(Boolean);
+          },
+          buildFacetClause: buildSizeFacetMatch,
+        }),
+      ]);
+
       const materials = (allMaterials || []).map((m) => ({
         _id: m._id,
         name: m.name,
-        count: matMap.get(String(m._id)) || 0,
+        // disjunctive count: if user adds this option to current selection
+        count: matDisjMap.get(String(m._id)) ?? (matMap.get(String(m._id)) || 0),
       }));
       const colors = (allColors || []).map((c) => ({
         _id: c._id,
         name: c.name,
-        count: colMap.get(String(c._id)) || 0,
+        count:
+          colorDisjMap.get(String(c._id)) ?? (colMap.get(String(c._id)) || 0),
       }));
       const sizes = (allSizes || []).map((s) => ({
         _id: s._id,
         name: s.name,
-        count: sizeMap.get(String(s._id)) || 0,
+        count:
+          sizeDisjMap.get(String(s._id)) ?? (sizeMap.get(String(s._id)) || 0),
       }));
       const collections = (allCollections || []).map((c) => ({
         _id: c._id,
