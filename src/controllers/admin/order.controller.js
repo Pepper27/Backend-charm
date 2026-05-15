@@ -13,11 +13,31 @@ const inferPayStatus = (o) => {
     const method = String(o.method || "").trim().toLowerCase();
     const provider = String((o.payment && o.payment.provider) || "").trim().toLowerCase();
     const captured = Number((o.payment && o.payment.capturedAmount) || 0);
+    const zpTransId = String((o.payment && o.payment.zpTransId) || "").trim();
+    const appTransId = String((o.payment && o.payment.appTransId) || "").trim();
     if (method.includes("zalopay") || provider.includes("zalopay") || captured > 0) return "paid";
+    if (zpTransId || appTransId) return "paid";
     return "unpaid";
   } catch (e) {
     return "unpaid";
   }
+};
+
+const buildPayStatusFind = (payStatus) => {
+  const v = String(payStatus || "").trim().toLowerCase();
+  if (!v) return null;
+
+  const paidOr = [
+    { payStatus: "paid" },
+    { method: { $regex: /zalopay/i } },
+    { "payment.capturedAmount": { $gt: 0 } },
+    { "payment.zpTransId": { $exists: true, $ne: "" } },
+    { "payment.appTransId": { $exists: true, $ne: "" } },
+  ];
+
+  if (v === "paid") return { $or: paidOr };
+  if (v === "unpaid") return { $nor: paidOr };
+  return null;
 };
 
 module.exports.getOrders = async (req, res) => {
@@ -37,7 +57,8 @@ module.exports.getOrders = async (req, res) => {
 
     if (status) find.status = status;
     if (method) find.method = method;
-    if (payStatus) find.payStatus = payStatus;
+    const payFind = buildPayStatusFind(payStatus);
+    if (payFind) Object.assign(find, payFind);
 
     if (startDate || endDate) {
       const createdAtFilter = {};
@@ -88,7 +109,7 @@ module.exports.getOrders = async (req, res) => {
       .skip(skip)
       .limit(limit)
       .select(
-        "orderCode userId cart bundles fullName email totalPrice status method payStatus address phone createdAt updatedAt"
+        "orderCode userId cart bundles fullName email totalPrice status method payStatus address phone payment createdAt updatedAt"
       )
       .populate({ path: "userId", select: "fullName email phone" })
       .lean();
@@ -148,6 +169,16 @@ module.exports.updateOrder = async (req, res) => {
     if (!order) {
       return res.status(404).json({ message: "Đơn hàng không tồn tại" });
     }
+
+     // Business rule: cash orders are paid upon successful delivery.
+     // If admin marks as delivered, automatically mark payStatus as paid.
+     if (
+       String(req.body?.status) === "delivered" &&
+       String(order.method || "").toLowerCase() === "cash"
+     ) {
+       req.body.payStatus = "paid";
+     }
+
     req.body.updatedBy = req.account.id;
     // Business rule: cancelled is terminal. Do not allow admin to change a cancelled order
     // back to any other lifecycle state to avoid stock/refund conflicts. If admin wants
