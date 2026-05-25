@@ -17,6 +17,8 @@ const normalizeEmail = (value) =>
     .trim()
     .toLowerCase();
 
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ""));
+
 const escapeHtml = (value) =>
   String(value || "")
     .replace(/&/g, "&amp;")
@@ -175,6 +177,10 @@ module.exports.checkoutBundles = async (req, res) => {
     const method = String(body.method || "cash").trim();
     if (!phone || !fullName || !address) {
       return res.status(400).json({ message: "Thiếu thông tin: phone, fullName, address" });
+    }
+    // Email is required so guests can receive order status / lookup later.
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ message: "Thiếu hoặc sai định dạng email" });
     }
     if (!bundleIds.length && !productLineIds.length) {
       return res.status(400).json({ message: "Thiếu bundleIds hoặc productLineIds" });
@@ -461,7 +467,8 @@ module.exports.emailOrders = async (req, res) => {
 
     const orders = await Order.find({ deleted: false, email })
       .sort({ createdAt: -1 })
-      .select("orderCode totalPrice status createdAt")
+      // Include cart so guest UI can show product thumbnail.
+      .select("orderCode totalPrice status createdAt cart")
       .lean();
 
     const safeEmail = escapeHtml(email);
@@ -485,9 +492,9 @@ module.exports.emailOrders = async (req, res) => {
       .join("\n");
 
     const content = `
-<div style="font-family:Arial,sans-serif;line-height:1.5">
-  <h2 style="margin:0 0 10px">Tra cứu đơn hàng</h2>
-  <div style="margin:0 0 12px">Email: <b>${safeEmail}</b></div>
+ <div style="font-family:Arial,sans-serif;line-height:1.5">
+   <h2 style="margin:0 0 10px">Tra cứu đơn hàng</h2>
+   <div style="margin:0 0 12px">Email: <b>${safeEmail}</b></div>
   ${
     orders?.length
       ? `<table style="width:100%;border-collapse:collapse">
@@ -505,19 +512,41 @@ module.exports.emailOrders = async (req, res) => {
 </table>
 <div style="margin-top:12px;font-size:12px;color:#666">Nếu bạn không yêu cầu tra cứu đơn hàng, có thể bỏ qua email này.</div>`
       : `<div>Không tìm thấy đơn hàng nào gắn với email này.</div>`
-  }
-</div>`;
+   }
+ </div>`;
+
+    // Some email clients strip tables/styles; include a plain-text fallback.
+    const text = orders?.length
+      ? [
+          "Tra cứu đơn hàng",
+          `Email: ${email}`,
+          "",
+          ...(orders || []).slice(0, 50).map((o) => {
+            const createdAt = o.createdAt
+              ? new Date(o.createdAt).toLocaleString("vi-VN")
+              : "";
+            const total =
+              (Number(o.totalPrice) || 0).toLocaleString("vi-VN") + "₫";
+            return `${o.orderCode} | ${statusLabelVI(o.status)} | ${createdAt} | ${total}`;
+          }),
+        ].join("\n")
+      : `Tra cứu đơn hàng\nEmail: ${email}\n\nKhông tìm thấy đơn hàng nào gắn với email này.`;
 
     // Always respond success to avoid leaking whether an email has orders.
     try {
-      mailHelper.sendMail(email, subject, content);
+      mailHelper.sendMail(email, subject, { html: content, text });
     } catch {
       // ignore mail transport errors here; caller still gets 200.
     }
 
     return res
       .status(200)
-      .json({ message: "Nếu email tồn tại trong hệ thống, chúng tôi đã gửi danh sách đơn hàng." });
+      .json({
+        message: "Nếu email tồn tại trong hệ thống, chúng tôi đã gửi danh sách đơn hàng.",
+        // Also return a snapshot so the UI can show the same info immediately.
+        // Note: /api/public/orders/lookup already exposes this data by email/phone.
+        data: orders || [],
+      });
   } catch (error) {
     return res.status(500).json({ message: "Lỗi khi gửi email tra cứu", error: error.message });
   }
