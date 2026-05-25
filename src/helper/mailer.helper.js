@@ -26,11 +26,16 @@ module.exports.sendMail = async (email, subject, content) => {
     },
   });
 
+  const html =
+    content && typeof content === "object" ? content.html || "" : String(content || "");
+  const text = content && typeof content === "object" ? content.text || "" : "";
+
   const mailOptions = {
     from: user,
     to: email,
     subject,
-    html: content,
+    html,
+    ...(text ? { text } : {}),
   };
 
   try {
