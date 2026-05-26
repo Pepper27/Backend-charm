@@ -2,6 +2,7 @@ const Order = require("../../../models/order.model");
 const v1 = require("../../../helper/v1-response.helper");
 const mongoose = require("mongoose");
 const RefundJob = require("../../../models/refundJob.model");
+const Product = require("../../../models/product.model");
 
 const normalizeStatus = (value) => String(value || "").trim();
 
@@ -16,6 +17,58 @@ const inferPayStatus = (o) => {
     return "unpaid";
   } catch (e) {
     return "unpaid";
+  }
+};
+
+const imageForVariant = (variant) => {
+  const img = variant?.images?.[0];
+  return typeof img === "string" && img.trim() ? img.trim() : "";
+};
+
+const enrichCartVariantMeta = async (orders) => {
+  const list = Array.isArray(orders) ? orders : [];
+  const variantIds = [];
+  for (const o of list) {
+    for (const line of Array.isArray(o?.cart) ? o.cart : []) {
+      const hasAny =
+        (line?.material && String(line.material).trim()) ||
+        (line?.color && String(line.color).trim()) ||
+        (line?.size && String(line.size).trim()) ||
+        (line?.image && String(line.image).trim());
+      if (!hasAny && line?.variantId) variantIds.push(String(line.variantId));
+    }
+  }
+  const unique = [...new Set(variantIds)].filter(Boolean);
+  if (!unique.length) return;
+
+  const products = await Product.find({ "variants._id": { $in: unique } })
+    .select("variants")
+    .lean();
+  const byVariantId = new Map();
+  for (const p of products || []) {
+    for (const v of Array.isArray(p?.variants) ? p.variants : []) {
+      const id = String(v?._id || "");
+      if (!id) continue;
+      if (!byVariantId.has(id)) {
+        byVariantId.set(id, {
+          material: String(v?.material || ""),
+          color: String(v?.color || ""),
+          size: String(v?.size || ""),
+          image: imageForVariant(v),
+        });
+      }
+    }
+  }
+
+  for (const o of list) {
+    for (const line of Array.isArray(o?.cart) ? o.cart : []) {
+      const meta = byVariantId.get(String(line?.variantId || ""));
+      if (!meta) continue;
+      if (!line.material) line.material = meta.material;
+      if (!line.color) line.color = meta.color;
+      if (!line.size) line.size = meta.size;
+      if (!line.image && meta.image) line.image = meta.image;
+    }
   }
 };
 
@@ -83,6 +136,13 @@ module.exports.list = async (req, res) => {
       )
       .lean();
 
+    // Best-effort: enrich cart lines with variant meta for older orders.
+    try {
+      await enrichCartVariantMeta(orders);
+    } catch {
+      // ignore
+    }
+
     // Ensure payStatus is present/inferred for client UI
     const withPay = (orders || []).map((o) => ({ ...o, payStatus: o.payStatus || inferPayStatus(o) }));
 
@@ -116,6 +176,11 @@ module.exports.getByCode = async (req, res) => {
 
     // infer payStatus if missing so client UI shows correct payment state
     order.payStatus = order.payStatus || inferPayStatus(order);
+    try {
+      await enrichCartVariantMeta([order]);
+    } catch {
+      // ignore
+    }
     return v1.ok(res, order);
   } catch (error) {
     return v1.serverError(res, error);

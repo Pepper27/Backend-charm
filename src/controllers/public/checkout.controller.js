@@ -48,6 +48,16 @@ const imageForVariant = (variant) => {
   return typeof img === "string" && img.trim() ? img.trim() : "";
 };
 
+const imageForProduct = (product) => {
+  // Fallback: some variants may not have images even though the product does.
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  for (const v of variants) {
+    const img = imageForVariant(v);
+    if (img) return img;
+  }
+  return "";
+};
+
 const vnYyMmDd = () => {
   // ZaloPay requires yymmdd in Vietnam timezone (GMT+7)
   const now = new Date(Date.now() + 7 * 60 * 60 * 1000);
@@ -139,7 +149,10 @@ const buildOrderComponentLineItems = async ({ bundle, pricingResult }) => {
     price: Number(braceletVariant.price) || 0,
     quantity: 1 * quantityMultiplier,
     name: String(braceletProduct.name || ""),
-    image: imageForVariant(braceletVariant),
+    image: imageForVariant(braceletVariant) || imageForProduct(braceletProduct),
+    material: String(braceletVariant.material || ""),
+    color: String(braceletVariant.color || ""),
+    size: String(braceletVariant.size || ""),
   });
 
   // Charm components.
@@ -154,11 +167,65 @@ const buildOrderComponentLineItems = async ({ bundle, pricingResult }) => {
       price: Number(charmVariant.price) || 0,
       quantity: 1 * quantityMultiplier,
       name: String(charm.name || ""),
-      image: imageForVariant(charmVariant),
+      image: imageForVariant(charmVariant) || imageForProduct(charm),
+      material: String(charmVariant.material || ""),
+      color: String(charmVariant.color || ""),
+      size: String(charmVariant.size || ""),
     });
   }
 
   return lines;
+};
+
+const enrichCartVariantMeta = async (ordersOrOrder) => {
+  const list = Array.isArray(ordersOrOrder) ? ordersOrOrder : [ordersOrOrder];
+  const variantIds = [];
+  for (const o of list) {
+    for (const line of Array.isArray(o?.cart) ? o.cart : []) {
+      const hasAny =
+        (line?.material && String(line.material).trim()) ||
+        (line?.color && String(line.color).trim()) ||
+        (line?.size && String(line.size).trim());
+      if (!hasAny && line?.variantId) variantIds.push(String(line.variantId));
+    }
+  }
+  const unique = [...new Set(variantIds)].filter(Boolean);
+  if (!unique.length) return;
+
+  const products = await Product.find({ "variants._id": { $in: unique }, deleted: false })
+    .select("variants")
+    .lean();
+  const byVariantId = new Map();
+  for (const p of products || []) {
+    for (const v of Array.isArray(p?.variants) ? p.variants : []) {
+      const id = String(v?._id || "");
+      if (!id) continue;
+      if (!byVariantId.has(id)) {
+        byVariantId.set(id, {
+          material: String(v?.material || ""),
+          color: String(v?.color || ""),
+          size: String(v?.size || ""),
+          image: imageForVariant(v),
+        });
+      }
+    }
+  }
+
+  for (const o of list) {
+    for (const line of Array.isArray(o?.cart) ? o.cart : []) {
+      const hasAny =
+        (line?.material && String(line.material).trim()) ||
+        (line?.color && String(line.color).trim()) ||
+        (line?.size && String(line.size).trim());
+      if (hasAny) continue;
+      const meta = byVariantId.get(String(line?.variantId || ""));
+      if (!meta) continue;
+      line.material = meta.material;
+      line.color = meta.color;
+      line.size = meta.size;
+      if (!line.image && meta.image) line.image = meta.image;
+    }
+  }
 };
 
 module.exports.checkoutBundles = async (req, res) => {
@@ -251,7 +318,10 @@ module.exports.checkoutBundles = async (req, res) => {
         price: Number(variant.price) || Number(pl.price) || 0,
         quantity: Number(pl.quantity) || 0,
         name: String(product.name || ""),
-        image: imageForVariant(variant),
+        image: imageForVariant(variant) || imageForProduct(product),
+        material: String(variant.material || ""),
+        color: String(variant.color || ""),
+        size: String(variant.size || ""),
       };
       allLines.push(line);
       requiredByVariantId.set(
@@ -318,6 +388,9 @@ module.exports.checkoutBundles = async (req, res) => {
         productId: it.productId,
         variantId: it.variantId,
         name: it.name,
+        material: it.material,
+        color: it.color,
+        size: it.size,
         price: it.price,
         quantity: it.quantity,
         image: it.image,
@@ -450,6 +523,12 @@ module.exports.getOrderByCode = async (req, res) => {
       return res.status(404).json({ message: "Đơn hàng không tồn tại" });
     }
 
+    try {
+      await enrichCartVariantMeta(order);
+    } catch {
+      // Best-effort enrichment; never fail the request.
+    }
+
     return res.status(200).json({ data: order });
   } catch (error) {
     return res.status(500).json({ message: "Lỗi khi lấy chi tiết đơn", error: error.message });
@@ -470,6 +549,12 @@ module.exports.emailOrders = async (req, res) => {
       // Include cart so guest UI can show product thumbnail.
       .select("orderCode totalPrice status createdAt cart")
       .lean();
+
+    try {
+      await enrichCartVariantMeta(orders);
+    } catch {
+      // Best-effort enrichment; never fail the request.
+    }
 
     const safeEmail = escapeHtml(email);
     const subject = "Tra cứu đơn hàng";
