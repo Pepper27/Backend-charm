@@ -47,6 +47,10 @@ const orderItemSchema = new mongoose.Schema({
   },
   variantId: String,
   name: String,
+  // Variant snapshot at checkout time (for order history UI)
+  material: { type: String, default: "" },
+  color: { type: String, default: "" },
+  size: { type: String, default: "" },
   price: Number,
   quantity: Number,
   image: String,
