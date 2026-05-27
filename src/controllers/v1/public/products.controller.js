@@ -323,7 +323,11 @@ module.exports.list = async (req, res) => {
                 slug: 1,
                 description: 1,
                 variants: 1,
-                engraving: { enabled: "$engraving.enabled", areas: "$engraving.areas" },
+                engraving: {
+                  enabled: "$engraving.enabled",
+                  areas: "$engraving.areas",
+                  _autoDetected: "$engraving._autoDetected",
+                },
                 category: {
                   _id: "$categoryDoc._id",
                   name: "$categoryDoc.name",
@@ -696,6 +700,39 @@ module.exports.getBySlug = async (req, res) => {
       return v1.fail(res, 404, "NOT_FOUND", "Product not found");
     }
 
+    // If engraving is enabled but areas missing, try to generate on-the-fly and persist.
+    try {
+      const gen = require("../../../lib/engraving-area-detector");
+      if (
+        doc.engraving &&
+        doc.engraving.enabled &&
+        (!Array.isArray(doc.engraving.areas) || doc.engraving.areas.length === 0) &&
+        doc.engraving.previewImage
+      ) {
+        const areas = await gen.generateAreasFromPreview(doc.engraving.previewImage).catch((e) => {
+          console.warn("engraving detector failed (slug)", slug, e?.message || e);
+          return [];
+        });
+        if (areas && areas.length) {
+          // persist the detected areas so subsequent requests are fast
+          try {
+            const meta = { detected: true, at: new Date() };
+            await Product.updateOne(
+              { _id: doc._id },
+              { $set: { "engraving.areas": areas, "engraving._autoDetected": meta } }
+            );
+            doc.engraving.areas = areas;
+            doc.engraving._autoDetected = meta;
+          } catch (e) {
+            console.warn("failed to persist engraving.areas for", doc._id, e?.message || e);
+          }
+        }
+      }
+    } catch (e) {
+      // don't block response on detector errors
+      console.warn("engraving detection pipeline error (slug)", slug, e?.message || e);
+    }
+
     return v1.ok(res, doc);
   } catch (error) {
     return v1.serverError(res, error);
@@ -741,6 +778,37 @@ module.exports.getById = async (req, res) => {
 
     if (!doc) {
       return v1.fail(res, 404, "NOT_FOUND", "Product not found");
+    }
+
+    // If engraving enabled but areas missing, try to generate and persist (same as getBySlug)
+    try {
+      const gen = require("../../../lib/engraving-area-detector");
+      if (
+        doc.engraving &&
+        doc.engraving.enabled &&
+        (!Array.isArray(doc.engraving.areas) || doc.engraving.areas.length === 0) &&
+        doc.engraving.previewImage
+      ) {
+        const areas = await gen.generateAreasFromPreview(doc.engraving.previewImage).catch((e) => {
+          console.warn("engraving detector failed (id)", id, e?.message || e);
+          return [];
+        });
+        if (areas && areas.length) {
+          try {
+            const meta = { detected: true, at: new Date() };
+            await Product.updateOne(
+              { _id: doc._id },
+              { $set: { "engraving.areas": areas, "engraving._autoDetected": meta } }
+            );
+            doc.engraving.areas = areas;
+            doc.engraving._autoDetected = meta;
+          } catch (e) {
+            console.warn("failed to persist engraving.areas for", doc._id, e?.message || e);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("engraving detection pipeline error (id)", id, e?.message || e);
     }
 
     return v1.ok(res, doc);

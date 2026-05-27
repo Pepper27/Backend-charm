@@ -123,6 +123,8 @@ schema.pre("save", async function (next) {
           const areas = await gen.generateAreasFromPreview(this.engraving.previewImage);
           if (areas && areas.length) {
             this.engraving.areas = areas;
+            // mark that these areas were auto-detected so admin can distinguish
+            this.engraving._autoDetected = { detected: true, at: new Date() };
           }
         } catch (e) {
           // non-fatal: log and continue
