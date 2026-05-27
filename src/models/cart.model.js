@@ -61,6 +61,12 @@ const schema = new mongoose.Schema(
         variantId: String,
         quantity: Number,
         price: Number,
+        // Engraving snapshot for this cart line (legacy products[] flow)
+        engraving: {
+          text: { type: String, default: "" },
+          fontId: { type: String, default: "" },
+          fontSizePx: Number,
+        },
         // When true, this line is a temporary "Buy Now" line.
         // It should not be merged with regular cart lines.
         isBuyNow: { type: Boolean, default: false },

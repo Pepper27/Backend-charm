@@ -101,7 +101,15 @@ const createZaloPayOrder = async ({ orderCode, amount, clientId }) => {
   params.set("description", `Thanh toan don hang ${orderCode}`);
   if (callbackUrl) params.set("callback_url", callbackUrl);
 
-  const macData = [appId, appTransId, clientId || "guest", String(Math.round(Number(amount) || 0)), String(appTime), JSON.stringify(embed), JSON.stringify(item)].join("|");
+  const macData = [
+    appId,
+    appTransId,
+    clientId || "guest",
+    String(Math.round(Number(amount) || 0)),
+    String(appTime),
+    JSON.stringify(embed),
+    JSON.stringify(item),
+  ].join("|");
   const mac = crypto.createHmac("sha256", key1).update(macData).digest("hex");
   params.set("mac", mac);
 
@@ -113,7 +121,10 @@ const createZaloPayOrder = async ({ orderCode, amount, clientId }) => {
   });
   const data = await resp.json().catch(() => null);
   if (!resp.ok) {
-    throw new Error((data && (data.return_message || data.message)) || `ZaloPay create failed (HTTP ${resp.status})`);
+    throw new Error(
+      (data && (data.return_message || data.message)) ||
+        `ZaloPay create failed (HTTP ${resp.status})`
+    );
   }
   if (!data || data.return_code !== 1) {
     const msg = data?.sub_return_message || data?.return_message || "ZaloPay create failed";
@@ -234,7 +245,9 @@ module.exports.checkoutBundles = async (req, res) => {
     const body = req.body || {};
     const bundleIds = Array.isArray(body.bundleIds) ? body.bundleIds.map(String) : [];
     // support productLineIds to checkout legacy cart.products lines
-    const productLineIds = Array.isArray(body.productLineIds) ? body.productLineIds.map(String) : [];
+    const productLineIds = Array.isArray(body.productLineIds)
+      ? body.productLineIds.map(String)
+      : [];
 
     const phone = normalizePhone(body.phone);
     const fullName = normalizeName(body.fullName);
@@ -308,9 +321,13 @@ module.exports.checkoutBundles = async (req, res) => {
         return res.status(400).json({ message: `Product not found: ${pl.productId}` });
       }
       const variantId = String(pl.variantId);
-      const variant = product.variants.find((v) => String(v._id) === variantId || String(v.code) === variantId);
+      const variant = product.variants.find(
+        (v) => String(v._id) === variantId || String(v.code) === variantId
+      );
       if (!variant) {
-        return res.status(400).json({ message: `Variant not found for product line: ${variantId}` });
+        return res
+          .status(400)
+          .json({ message: `Variant not found for product line: ${variantId}` });
       }
       const line = {
         productId: String(product._id),
@@ -322,6 +339,7 @@ module.exports.checkoutBundles = async (req, res) => {
         material: String(variant.material || ""),
         color: String(variant.color || ""),
         size: String(variant.size || ""),
+        engraving: pl.engraving || undefined,
       };
       allLines.push(line);
       requiredByVariantId.set(
@@ -358,7 +376,10 @@ module.exports.checkoutBundles = async (req, res) => {
     }
 
     const orderCode = `ORD${Date.now()}${helper.generateRandomNumber(4)}`;
-    const productsPrice = selectedProductLines.reduce((s, p) => s + (Number(p.price) || 0) * (Number(p.quantity) || 0), 0);
+    const productsPrice = selectedProductLines.reduce(
+      (s, p) => s + (Number(p.price) || 0) * (Number(p.quantity) || 0),
+      0
+    );
     const bundlesPrice = validated.reduce(
       (sum, { bundle, result }) =>
         sum + (Number(result?.pricing?.total) || 0) * (Number(bundle?.quantity) || 1),
@@ -377,13 +398,16 @@ module.exports.checkoutBundles = async (req, res) => {
       method,
       // For Zalopay: start as unpaid. Will be marked paid by webhook/confirm.
       payStatus: "unpaid",
-      payment: method === "zalopay" ? {
-        provider: "zalopay",
-        capturedAmount: 0,
-        providerChargeId: "",
-        refundStatus: "none",
-        refunds: [],
-      } : undefined,
+      payment:
+        method === "zalopay"
+          ? {
+              provider: "zalopay",
+              capturedAmount: 0,
+              providerChargeId: "",
+              refundStatus: "none",
+              refunds: [],
+            }
+          : undefined,
       cart: allLines.map((it) => ({
         productId: it.productId,
         variantId: it.variantId,
@@ -394,6 +418,7 @@ module.exports.checkoutBundles = async (req, res) => {
         price: it.price,
         quantity: it.quantity,
         image: it.image,
+        engraving: it.engraving || undefined,
       })),
       bundles: validated.map(({ bundle, result }) => ({
         bundleId: String(bundle.bundleId),
@@ -458,7 +483,11 @@ module.exports.checkoutBundles = async (req, res) => {
 
     // ZaloPay: create payment order and return order_url for redirect.
     const clientId = req.client?._id ? String(req.client._id) : String(guestId || "guest");
-    const zlp = await createZaloPayOrder({ orderCode: order.orderCode, amount: totalPrice, clientId });
+    const zlp = await createZaloPayOrder({
+      orderCode: order.orderCode,
+      amount: totalPrice,
+      clientId,
+    });
     await Order.updateOne(
       { _id: order._id },
       {
@@ -597,7 +626,7 @@ module.exports.emailOrders = async (req, res) => {
 </table>
 <div style="margin-top:12px;font-size:12px;color:#666">Nếu bạn không yêu cầu tra cứu đơn hàng, có thể bỏ qua email này.</div>`
       : `<div>Không tìm thấy đơn hàng nào gắn với email này.</div>`
-   }
+  }
  </div>`;
 
     // Some email clients strip tables/styles; include a plain-text fallback.
@@ -607,11 +636,8 @@ module.exports.emailOrders = async (req, res) => {
           `Email: ${email}`,
           "",
           ...(orders || []).slice(0, 50).map((o) => {
-            const createdAt = o.createdAt
-              ? new Date(o.createdAt).toLocaleString("vi-VN")
-              : "";
-            const total =
-              (Number(o.totalPrice) || 0).toLocaleString("vi-VN") + "₫";
+            const createdAt = o.createdAt ? new Date(o.createdAt).toLocaleString("vi-VN") : "";
+            const total = (Number(o.totalPrice) || 0).toLocaleString("vi-VN") + "₫";
             return `${o.orderCode} | ${statusLabelVI(o.status)} | ${createdAt} | ${total}`;
           }),
         ].join("\n")
@@ -624,14 +650,12 @@ module.exports.emailOrders = async (req, res) => {
       // ignore mail transport errors here; caller still gets 200.
     }
 
-    return res
-      .status(200)
-      .json({
-        message: "Nếu email tồn tại trong hệ thống, chúng tôi đã gửi danh sách đơn hàng.",
-        // Also return a snapshot so the UI can show the same info immediately.
-        // Note: /api/public/orders/lookup already exposes this data by email/phone.
-        data: orders || [],
-      });
+    return res.status(200).json({
+      message: "Nếu email tồn tại trong hệ thống, chúng tôi đã gửi danh sách đơn hàng.",
+      // Also return a snapshot so the UI can show the same info immediately.
+      // Note: /api/public/orders/lookup already exposes this data by email/phone.
+      data: orders || [],
+    });
   } catch (error) {
     return res.status(500).json({ message: "Lỗi khi gửi email tra cứu", error: error.message });
   }

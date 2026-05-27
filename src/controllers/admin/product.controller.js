@@ -359,9 +359,18 @@ module.exports.createProduct = async (req, res) => {
     // ... bên trong hàm createProduct ...
 
     // 1. Lấy danh sách thực tế từ các biến thể còn lại
-    const finalMaterials = [...new Set(variants.map(v => v.material).filter(Boolean))];
-    const finalColors = [...new Set(variants.map(v => v.color).filter(Boolean))];
-    const finalSizes = [...new Set(variants.map(v => v.size).filter(Boolean))];
+    const finalMaterials = [...new Set(variants.map((v) => v.material).filter(Boolean))];
+    const finalColors = [...new Set(variants.map((v) => v.color).filter(Boolean))];
+    const finalSizes = [...new Set(variants.map((v) => v.size).filter(Boolean))];
+
+    // Parse engraving config if provided in form (may be JSON string or object)
+    const engravingFromBody = (() => {
+      try {
+        return parseJsonField(req.body.engraving, undefined);
+      } catch (e) {
+        return undefined;
+      }
+    })();
 
     const product = new Product({
       name,
@@ -372,15 +381,19 @@ module.exports.createProduct = async (req, res) => {
         // Thay vì dùng options từ req.body, ta dùng dữ liệu thực tế từ variants
         materials: finalMaterials,
         colors: finalColors,
-        sizes: finalSizes
+        sizes: finalSizes,
       },
       variants: newVariants,
       createdBy: req.account?.id,
+      // attach engraving config if provided
+      ...(engravingFromBody !== undefined ? { engraving: engravingFromBody } : {}),
     });
 
     // Sau đó dùng các mảng final này để map ID như bạn đã làm
     if (finalMaterials.length) {
-      const mats = await Material.find({ name: { $in: finalMaterials }, deleted: false }).select("_id").lean();
+      const mats = await Material.find({ name: { $in: finalMaterials }, deleted: false })
+        .select("_id")
+        .lean();
       product.materials = mats.map((m) => m._id);
     }
     // Tương tự cho colors và sizes...
@@ -388,17 +401,23 @@ module.exports.createProduct = async (req, res) => {
     // Resolve attribute references and compute price range
     try {
       if (materialsFromVariants.length) {
-        const mats = await Material.find({ name: { $in: materialsFromVariants }, deleted: false }).select("_id").lean();
+        const mats = await Material.find({ name: { $in: materialsFromVariants }, deleted: false })
+          .select("_id")
+          .lean();
         product.materials = mats.map((m) => m._id);
       }
       const colorNames = [...new Set(newVariants.map((v) => v.color).filter(Boolean))];
       if (colorNames.length) {
-        const cols = await Color.find({ name: { $in: colorNames }, deleted: false }).select("_id").lean();
+        const cols = await Color.find({ name: { $in: colorNames }, deleted: false })
+          .select("_id")
+          .lean();
         product.colors = cols.map((c) => c._id);
       }
       const sizeNames = [...new Set(newVariants.map((v) => v.size).filter(Boolean))];
       if (sizeNames.length) {
-        const sz = await Size.find({ name: { $in: sizeNames }, deleted: false }).select("_id").lean();
+        const sz = await Size.find({ name: { $in: sizeNames }, deleted: false })
+          .select("_id")
+          .lean();
         product.sizes = sz.map((s) => s._id);
       }
       const prices = newVariants.map((v) => Number(v.price) || 0);
@@ -548,23 +567,46 @@ module.exports.updateProduct = async (req, res) => {
       ...(options || product.options || {}),
       materials: materialsFromVariants,
     };
+    // Parse engraving config from form if present
+    try {
+      const engravingFromBody = parseJsonField(req.body.engraving, undefined);
+      if (engravingFromBody !== undefined) {
+        product.engraving = engravingFromBody;
+      } else if (req.body["engraving.enabled"] !== undefined) {
+        // defensive: support dot-notated fields or legacy toggles
+        const enabledVal = String(req.body["engraving.enabled"]).toLowerCase();
+        product.engraving = product.engraving || {};
+        product.engraving.enabled = enabledVal === "true" || enabledVal === "1";
+      } else if (req.body.engravingEnabled !== undefined) {
+        product.engraving = product.engraving || {};
+        product.engraving.enabled = String(req.body.engravingEnabled).toLowerCase() === "true";
+      }
+    } catch (e) {
+      // ignore parsing errors and continue
+    }
     product.variants = newVariants;
     product.updatedBy = req.account?.id;
 
     // resolve attribute references and compute price range for update
     try {
       if (materialsFromVariants.length) {
-        const mats = await Material.find({ name: { $in: materialsFromVariants }, deleted: false }).select("_id").lean();
+        const mats = await Material.find({ name: { $in: materialsFromVariants }, deleted: false })
+          .select("_id")
+          .lean();
         product.materials = mats.map((m) => m._id);
       }
       const colorNames = [...new Set(newVariants.map((v) => v.color).filter(Boolean))];
       if (colorNames.length) {
-        const cols = await Color.find({ name: { $in: colorNames }, deleted: false }).select("_id").lean();
+        const cols = await Color.find({ name: { $in: colorNames }, deleted: false })
+          .select("_id")
+          .lean();
         product.colors = cols.map((c) => c._id);
       }
       const sizeNames = [...new Set(newVariants.map((v) => v.size).filter(Boolean))];
       if (sizeNames.length) {
-        const sz = await Size.find({ name: { $in: sizeNames }, deleted: false }).select("_id").lean();
+        const sz = await Size.find({ name: { $in: sizeNames }, deleted: false })
+          .select("_id")
+          .lean();
         product.sizes = sz.map((s) => s._id);
       }
       const prices = newVariants.map((v) => Number(v.price) || 0);

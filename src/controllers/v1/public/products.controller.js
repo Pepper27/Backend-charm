@@ -323,6 +323,7 @@ module.exports.list = async (req, res) => {
                 slug: 1,
                 description: 1,
                 variants: 1,
+                engraving: { enabled: "$engraving.enabled", areas: "$engraving.areas" },
                 category: {
                   _id: "$categoryDoc._id",
                   name: "$categoryDoc.name",
@@ -435,10 +436,7 @@ module.exports.list = async (req, res) => {
         : null;
       const clauseSizes = sizesCsv.length
         ? {
-            $or: [
-              { "options.sizes": { $in: sizesCsv } },
-              { "variants.size": { $in: sizesCsv } },
-            ],
+            $or: [{ "options.sizes": { $in: sizesCsv } }, { "variants.size": { $in: sizesCsv } }],
           }
         : null;
       if (clauseMaterials) andClauses.push(clauseMaterials);
@@ -497,24 +495,15 @@ module.exports.list = async (req, res) => {
       // count(option) = number of products if we add that option to the current selection
       // (within the same facet). This avoids negative jumps for multi-select OR.
       const buildStringFacetMatch = (vals) => ({
-        $or: [
-          { "options.materials": { $in: vals } },
-          { "variants.material": { $in: vals } },
-        ],
+        $or: [{ "options.materials": { $in: vals } }, { "variants.material": { $in: vals } }],
       });
 
       const buildColorFacetMatch = (vals) => ({
-        $or: [
-          { "options.colors": { $in: vals } },
-          { "variants.color": { $in: vals } },
-        ],
+        $or: [{ "options.colors": { $in: vals } }, { "variants.color": { $in: vals } }],
       });
 
       const buildSizeFacetMatch = (vals) => ({
-        $or: [
-          { "options.sizes": { $in: vals } },
-          { "variants.size": { $in: vals } },
-        ],
+        $or: [{ "options.sizes": { $in: vals } }, { "variants.size": { $in: vals } }],
       });
 
       const disjunctiveCounts = async ({
@@ -632,14 +621,12 @@ module.exports.list = async (req, res) => {
       const colors = (allColors || []).map((c) => ({
         _id: c._id,
         name: c.name,
-        count:
-          colorDisjMap.get(String(c._id)) ?? (colMap.get(String(c._id)) || 0),
+        count: colorDisjMap.get(String(c._id)) ?? (colMap.get(String(c._id)) || 0),
       }));
       const sizes = (allSizes || []).map((s) => ({
         _id: s._id,
         name: s.name,
-        count:
-          sizeDisjMap.get(String(s._id)) ?? (sizeMap.get(String(s._id)) || 0),
+        count: sizeDisjMap.get(String(s._id)) ?? (sizeMap.get(String(s._id)) || 0),
       }));
       const collections = (allCollections || []).map((c) => ({
         _id: c._id,
@@ -694,6 +681,7 @@ module.exports.getBySlug = async (req, res) => {
           slug: 1,
           description: 1,
           variants: 1,
+          engraving: "$engraving",
           category: {
             _id: "$categoryDoc._id",
             name: "$categoryDoc.name",
@@ -740,6 +728,7 @@ module.exports.getById = async (req, res) => {
           slug: 1,
           description: 1,
           variants: 1,
+          engraving: "$engraving",
           category: {
             _id: "$categoryDoc._id",
             name: "$categoryDoc.name",
