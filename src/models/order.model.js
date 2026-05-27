@@ -54,6 +54,12 @@ const orderItemSchema = new mongoose.Schema({
   price: Number,
   quantity: Number,
   image: String,
+  // Engraving snapshot if this line had engraving
+  engraving: {
+    text: { type: String, default: "" },
+    fontId: { type: String, default: "" },
+    fontSizePx: Number,
+  },
   // Whether this line has been restocked after a cancel to avoid double-restock.
   stockReleased: { type: Boolean, default: false },
 });

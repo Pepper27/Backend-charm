@@ -91,6 +91,19 @@ module.exports.addProductToCart = async (req, res) => {
   try {
     const guestId = ensureGuestIdCookie(req, res);
     const { productId, variantId, quantity, buyNow } = req.body || {};
+    // Optional engraving payload: { text, fontId, fontSizePx }
+    const rawEng = req.body?.engraving;
+
+    const normalizeEngraving = (eng) => {
+      if (!eng || typeof eng !== "object") return { text: "", fontId: "", fontSizePx: undefined };
+      const text = String(eng.text || "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const fontId = String(eng.fontId || "").trim();
+      const fontSizePx = eng.fontSizePx !== undefined ? Number(eng.fontSizePx) : undefined;
+      return { text, fontId, fontSizePx };
+    };
+    const engraving = normalizeEngraving(rawEng);
 
     if (!productId) return res.status(400).json({ message: "Missing productId" });
     const qty = Number.isFinite(Number(quantity)) ? Math.max(1, Number(quantity)) : 1;
@@ -103,7 +116,9 @@ module.exports.addProductToCart = async (req, res) => {
     // Find variant either by _id or by code
     let variant = null;
     if (variantId) {
-      variant = (product.variants || []).find((v) => String(v._id) === String(variantId) || String(v.code) === String(variantId));
+      variant = (product.variants || []).find(
+        (v) => String(v._id) === String(variantId) || String(v.code) === String(variantId)
+      );
     } else {
       // default to first variant
       variant = (product.variants || [])[0] || null;
@@ -135,6 +150,7 @@ module.exports.addProductToCart = async (req, res) => {
         variantId: variant._id,
         quantity: 1,
         price,
+        engraving,
         isBuyNow: true,
         createdAt: new Date(),
       };
@@ -143,13 +159,33 @@ module.exports.addProductToCart = async (req, res) => {
       const pushed = cart.products[cart.products.length - 1];
       createdLineId = pushed && pushed._id ? String(pushed._id) : null;
     } else {
-      // Find existing line
-      const idx = (cart.products || []).findIndex((p) => String(p.productId) === String(product._id) && String(p.variantId) === String(variant._id));
+      // Find existing line but take engraving into account - do not merge if engraving differs
+      const idx = (cart.products || []).findIndex((p) => {
+        if (
+          String(p.productId) !== String(product._id) ||
+          String(p.variantId) !== String(variant._id)
+        )
+          return false;
+        // prefer merging only with non-buyNow lines
+        if (p.isBuyNow) return false;
+        const existingEng = p.engraving || {};
+        const eText = String(existingEng.text || "");
+        const eFont = String(existingEng.fontId || "");
+        return eText === engraving.text && eFont === engraving.fontId;
+      });
       if (idx !== -1) {
         cart.products[idx].quantity = (Number(cart.products[idx].quantity) || 0) + qty;
         cart.products[idx].price = Number(price);
       } else {
-        const newLine = { productId: product._id, variantId: variant._id, quantity: qty, price, isBuyNow: false, createdAt: new Date() };
+        const newLine = {
+          productId: product._id,
+          variantId: variant._id,
+          quantity: qty,
+          price,
+          engraving,
+          isBuyNow: false,
+          createdAt: new Date(),
+        };
         cart.products.push(newLine);
       }
     }
@@ -161,7 +197,10 @@ module.exports.addProductToCart = async (req, res) => {
     let lineId = createdLineId;
     if (!lineId) {
       // match by productId+variantId; prefer non-buyNow lines when not explicitly requested
-      const found = (savedCart.products || []).find((p) => String(p.productId) === String(product._id) && String(p.variantId) === String(variant._id));
+      const found = (savedCart.products || []).find(
+        (p) =>
+          String(p.productId) === String(product._id) && String(p.variantId) === String(variant._id)
+      );
       lineId = found ? String(found._id) : null;
     }
 
@@ -266,8 +305,26 @@ module.exports.patchProduct = async (req, res) => {
 
     const existing = cart.products[idx];
     if (req.body?.quantity !== undefined) {
-      const q = Number.isFinite(Number(req.body.quantity)) ? Math.max(Number(req.body.quantity), 1) : 1;
+      const q = Number.isFinite(Number(req.body.quantity))
+        ? Math.max(Number(req.body.quantity), 1)
+        : 1;
       existing.quantity = q;
+    }
+
+    // Support updating/clearing engraving on the line
+    if (req.body?.engraving !== undefined) {
+      const raw = req.body.engraving;
+      if (raw === null) {
+        // clear engraving
+        existing.engraving = { text: "", fontId: "", fontSizePx: undefined };
+      } else if (typeof raw === "object") {
+        const text = String(raw.text || "")
+          .replace(/\s+/g, " ")
+          .trim();
+        const fontId = String(raw.fontId || "").trim();
+        const fontSizePx = raw.fontSizePx !== undefined ? Number(raw.fontSizePx) : undefined;
+        existing.engraving = { text, fontId, fontSizePx };
+      }
     }
 
     // Optionally allow variant change (and price update) if provided
@@ -275,7 +332,11 @@ module.exports.patchProduct = async (req, res) => {
       const Product = require("../../models/product.model");
       const product = await Product.findOne({ _id: existing.productId, deleted: false }).lean();
       if (!product) return res.status(400).json({ message: "Product not found" });
-      const variant = (product.variants || []).find((v) => String(v._id) === String(req.body.variantId) || String(v.code) === String(req.body.variantId));
+      const variant = (product.variants || []).find(
+        (v) =>
+          String(v._id) === String(req.body.variantId) ||
+          String(v.code) === String(req.body.variantId)
+      );
       if (!variant) return res.status(400).json({ message: "Variant not found" });
       existing.variantId = variant._id;
       existing.price = Number(variant.price) || 0;
@@ -301,7 +362,7 @@ module.exports.deleteProduct = async (req, res) => {
     const cart = await Cart.findOneAndUpdate(
       cartKey,
       { $pull: { products: { _id: String(lineId) } } },
-      { new: true },
+      { new: true }
     ).lean();
 
     return res.status(200).json({ data: cart || { guestId, products: [], bundles: [] } });
