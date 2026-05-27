@@ -22,6 +22,24 @@ const parseJsonField = (value, fallback) => {
   return value;
 };
 
+const sanitizeAreas = (areas) => {
+  if (!areas) return [];
+  if (!Array.isArray(areas)) throw new Error("engraving.areas must be an array");
+  return areas.map((a, idx) => {
+    if (!a || typeof a !== "object") throw new Error(`engraving.areas[${idx}] invalid`);
+    const id = String(a.id || `area_${idx}`);
+    const xPct = Number(a.xPct ?? 0);
+    const yPct = Number(a.yPct ?? 0);
+    const wPct = Number(a.wPct ?? 100);
+    const hPct = Number(a.hPct ?? 100);
+    const shape = String(a.shape || "rect");
+    const check = (v) => Number.isFinite(v) && v >= 0 && v <= 100;
+    if (!check(xPct) || !check(yPct) || !check(wPct) || !check(hPct))
+      throw new Error(`engraving.areas[${idx}] coordinates must be numbers between 0 and 100`);
+    return { id, xPct, yPct, wPct, hPct, shape };
+  });
+};
+
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // Category.parent is stored as a stringified ObjectId in this codebase.
@@ -372,6 +390,40 @@ module.exports.createProduct = async (req, res) => {
       }
     })();
 
+    // Build engraving object: merge engravingFromBody and dot-notated toggles.
+    let engravingObj = undefined;
+    try {
+      if (engravingFromBody !== undefined) {
+        // sanitize areas if present
+        if (engravingFromBody.areas) {
+          try {
+            engravingFromBody.areas = sanitizeAreas(engravingFromBody.areas);
+            // mark as manual override so auto-detected metadata is not mistaken
+            engravingFromBody._autoDetected = {
+              detected: false,
+              updatedBy: req.account?.id,
+              at: new Date(),
+            };
+          } catch (e) {
+            return res.status(400).json({ message: `engraving.areas invalid: ${e.message}` });
+          }
+        }
+        engravingObj = { ...(engravingFromBody || {}) };
+      }
+      // fallback: support dot-notated engraving.enabled or engravingEnabled
+      if (engravingObj === undefined && req.body["engraving.enabled"] !== undefined) {
+        engravingObj = engravingObj || {};
+        engravingObj.enabled =
+          String(req.body["engraving.enabled"]).toLowerCase() === "true" ||
+          String(req.body["engraving.enabled"]) === "1";
+      } else if (engravingObj === undefined && req.body.engravingEnabled !== undefined) {
+        engravingObj = engravingObj || {};
+        engravingObj.enabled = String(req.body.engravingEnabled).toLowerCase() === "true";
+      }
+    } catch (e) {
+      // ignore
+    }
+
     const product = new Product({
       name,
       description,
@@ -386,7 +438,7 @@ module.exports.createProduct = async (req, res) => {
       variants: newVariants,
       createdBy: req.account?.id,
       // attach engraving config if provided
-      ...(engravingFromBody !== undefined ? { engraving: engravingFromBody } : {}),
+      ...(engravingObj !== undefined ? { engraving: engravingObj } : {}),
     });
 
     // Sau đó dùng các mảng final này để map ID như bạn đã làm
@@ -571,6 +623,19 @@ module.exports.updateProduct = async (req, res) => {
     try {
       const engravingFromBody = parseJsonField(req.body.engraving, undefined);
       if (engravingFromBody !== undefined) {
+        // sanitize areas if provided
+        if (engravingFromBody.areas) {
+          try {
+            engravingFromBody.areas = sanitizeAreas(engravingFromBody.areas);
+            engravingFromBody._autoDetected = {
+              detected: false,
+              updatedBy: req.account?.id,
+              at: new Date(),
+            };
+          } catch (err) {
+            return res.status(400).json({ message: `engraving.areas invalid: ${err.message}` });
+          }
+        }
         product.engraving = engravingFromBody;
       } else if (req.body["engraving.enabled"] !== undefined) {
         // defensive: support dot-notated fields or legacy toggles
