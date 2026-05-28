@@ -1,3 +1,228 @@
+// const moment = require("moment");
+// const Order = require("../../models/order.model");
+// const Product = require("../../models/product.model");
+// const AccountClient = require("../../models/accountClient.model");
+// const Category = require("../../models/category.model");
+
+// const STATUS_MAP = {
+//   pending: "initial",
+//   confirmed: "initial",
+//   shipping: "ship",
+//   delivered: "done",
+//   cancelled: "cancel",
+// };
+
+// const METHOD_MAP = {
+//   cash: "Tiền mặt",
+//   zalopay: "ZaloPay",
+// };
+
+// const PAY_STATUS_MAP = {
+//   unpaid: "Chưa thanh toán",
+//   paid: "Đã thanh toán",
+// };
+
+// module.exports.getDashboard = async (req, res) => {
+//   try {
+//     const thresholdAlmostOver = 5; 
+
+//     const [
+//       totalClient,
+//       totalProductAgg,
+//       orderCount,
+//       revenueAgg,
+//       orderNewRaw,
+//       categoryList,
+//       productsRaw,
+//       topOrdersRaw,
+//       allProductsRaw,
+//     ] = await Promise.all([
+//       AccountClient.countDocuments({ deleted: false }),
+//       Product.aggregate([
+//         { $match: { deleted: false } },
+//         { $unwind: { path: "$variants", preserveNullAndEmptyArrays: true } },
+//         { $group: { _id: null, sum: { $sum: { $ifNull: ["$variants.quantity", 0] } } } },
+//       ]),
+//       Order.countDocuments({ deleted: false }),
+//       Order.aggregate([
+//         { $match: { deleted: false, status: "delivered" } },
+//         { $group: { _id: null, sum: { $sum: "$totalPrice" } } },
+//       ]),
+
+//       Order.find({ deleted: false })
+//         .sort({ createdAt: -1 })
+//         .limit(10)
+//         .populate("userId", "fullName")
+//         .lean(),
+//       Category.find({ deleted: false, parent: "" })
+//         .sort({ position: 1 })
+//         .select({ _id: 1, name: 1 })
+//         .lean(),
+//       Product.find({ deleted: false })
+//         .select({ name: 1, variants: 1 })
+//         .lean(),
+
+//       Order.find({
+//         deleted: false,
+//         payStatus: "paid",
+//         status: { $ne: "cancelled" },
+//       })
+//         .select({ cart: 1, totalPrice: 1 })
+//         .lean(),
+//       Product.find({})
+//         .select({ name: 1, variants: 1 })
+//         .lean(),
+//     ]);
+
+//     const dashboard = {
+//       order: orderCount,
+//       priceTotal: revenueAgg?.[0]?.sum || 0,
+//     };
+//     const totalProduct = totalProductAgg?.[0]?.sum || 0;
+
+//     const products = productsRaw || [];
+//     let almostOver = 0;
+//     let soldOut = 0;
+//     let many = 0;
+
+//     const computedTopProduct = products
+//       .map((p) => {
+//         const variants = p?.variants || [];
+
+//         for (const v of variants) {
+//           const q = Number(v?.quantity || 0);
+//           if (q === 0) soldOut += 1;
+//           else if (q <= thresholdAlmostOver) almostOver += 1;
+//           else many += 1;
+//         }
+
+//         return { name: p?.name || "", sold: 0, profit: 0 };
+//       })
+//       .slice(0, 5);
+
+//     const productMap = new Map(products.map((p) => [String(p?._id || ""), p]));
+//     const allProductMap = new Map(
+//       (allProductsRaw || []).map((p) => [String(p?._id || ""), p])
+//     );
+
+//     const topAccumulator = new Map();
+//     for (const order of topOrdersRaw || []) {
+//       const cart = order?.cart || [];
+//       if (!cart.length) continue;
+
+//       const lineTotals = cart.map(
+//         (it) => (Number(it?.quantity || 0) * Number(it?.price || 0))
+//       );
+//       const sumLine = lineTotals.reduce((a, b) => a + b, 0);
+//       const orderTotal = Number(order?.totalPrice || 0);
+
+//       cart.forEach((it, idx) => {
+//         const pid = String(it?.productId || "");
+//         if (!pid) return;
+
+//         const qty = Number(it?.quantity || 0);
+//         const lineTotal = Number(lineTotals[idx] || 0);
+//         const allocatedRevenue =
+//           cart.length === 1
+//             ? orderTotal
+//             : sumLine > 0
+//               ? (orderTotal * lineTotal) / sumLine
+//               : lineTotal;
+
+//         if (!topAccumulator.has(pid)) {
+//           topAccumulator.set(pid, {
+//             productId: pid,
+//             sold: 0,
+//             profit: 0,
+//           });
+//         }
+//         const cur = topAccumulator.get(pid);
+//         cur.sold += qty;
+//         cur.profit += allocatedRevenue;
+//       });
+//     }
+
+//     const topProduct = Array.from(topAccumulator.values())
+//       .sort((a, b) => b.sold - a.sold || b.profit - a.profit)
+//       .slice(0, 5)
+//       .map((item) => ({
+//         name: allProductMap.get(item.productId)?.name || "Không rõ",
+//         sold: Number(item.sold || 0),
+//         profit: Math.round(Number(item.profit || 0)),
+//       }));
+
+//     const topProductFinal = topProduct.length ? topProduct : computedTopProduct;
+
+//     const formattedOrderNew = (orderNewRaw || []).map((order) => {
+//       const m = moment(order.createdAt);
+//       const orderCart = (order?.cart || []).map((it) => {
+//         const product =
+//           allProductMap.get(String(it?.productId || "")) ||
+//           productMap.get(String(it?.productId || ""));
+//         const variant = (product?.variants || []).find(
+//           (v) => String(v?._id || "") === String(it?.variantId || "")
+//         );
+//         const variantImage = Array.isArray(variant?.images) && variant.images.length
+//           ? variant.images[0]
+//           : "";
+
+//         return {
+//           avatar: it?.image || it?.avatar || variantImage || "",
+//           name: it?.name || product?.name || "",
+//           quantity: it?.quantity || 0,
+//           priceLast: it?.price || variant?.price || 0,
+//         };
+//       });
+
+//       const statusKey = order?.status;
+//       const mappedStatus = STATUS_MAP[statusKey] || "cancel";
+
+//       const methodKey = order?.method;
+//       const mappedMethod = METHOD_MAP[methodKey] || methodKey || "";
+
+//       const payStatusKey = order?.payStatus;
+//       const mappedPayStatus =
+//         PAY_STATUS_MAP[payStatusKey] || payStatusKey || "";
+
+//       return {
+//         orderCode: order?.orderCode || "",
+//         fullName: order?.userId?.fullName || "",
+//         phone: order?.phone || "",
+//         note: order?.address || "",
+//         cart: orderCart,
+//         priceTotal: order?.totalPrice || 0,
+//         nameMethod: mappedMethod,
+//         nameStatusPay: mappedPayStatus,
+//         status: mappedStatus,
+//         formatTime: m.isValid() ? m.format("HH:mm") : "",
+//         formatDay: m.isValid() ? m.format("DD/MM/YYYY") : "",
+//       };
+//     });
+
+//     const data = {
+//       totalClient,
+//       totalProduct,
+//       dashboard,
+//       categoryList: (categoryList || []).map((c) => ({
+//         id: c._id,
+//         name: c.name,
+//       })),
+//       almostOver,
+//       soldOut,
+//       many,
+//       topProduct: topProductFinal,
+//       orderNew: formattedOrderNew,
+//     };
+
+//     return res.status(200).json({ data });
+//   } catch (error) {
+//     return res.status(500).json({
+//       message: "Lỗi khi lấy dashboard",
+//       error: error.message,
+//     });
+//   }
+// };
+
 const moment = require("moment");
 const Order = require("../../models/order.model");
 const Product = require("../../models/product.model");
@@ -22,19 +247,46 @@ const PAY_STATUS_MAP = {
   paid: "Đã thanh toán",
 };
 
+// Hàm helper để tính toán khoảng thời gian dựa trên filterType
+const getTimeBounds = (filterType, startQuery, endQuery) => {
+  let start = moment().startOf("month");
+  let end = moment().endOf("month");
+
+  if (filterType === "range" && startQuery && endQuery) {
+    start = moment(startQuery).startOf("day");
+    end = moment(endQuery).endOf("day");
+  } else if (filterType === "week") {
+    // Tuần hiện tại
+    start = moment().startOf("week");
+    end = moment().endOf("week");
+  } else if (filterType === "month") {
+    // Tháng được chọn hoặc tháng hiện tại (Định dạng YYYY-MM)
+    const targetMonth = startQuery ? moment(startQuery, "YYYY-MM") : moment();
+    start = targetMonth.clone().startOf("month");
+    end = targetMonth.clone().endOf("month");
+  } else if (filterType === "year") {
+    // Năm được chọn hoặc năm hiện tại (Định dạng YYYY)
+    const targetYear = startQuery ? moment(startQuery, "YYYY") : moment();
+    start = targetYear.clone().startOf("year");
+    end = targetYear.clone().endOf("year");
+  }
+
+  return { startDate: start.toDate(), endDate: end.toDate() };
+};
+
 module.exports.getDashboard = async (req, res) => {
   try {
+    const { filterType, startDate: sQ, endDate: eQ } = req.query;
+    const { startDate, endDate } = getTimeBounds(filterType, sQ, eQ);
+
     const thresholdAlmostOver = 5; 
 
+    // Các query tổng số lượng giữ nguyên không đổi theo thời gian
     const [
       totalClient,
       totalProductAgg,
-      orderCount,
-      revenueAgg,
-      orderNewRaw,
       categoryList,
       productsRaw,
-      topOrdersRaw,
       allProductsRaw,
     ] = await Promise.all([
       AccountClient.countDocuments({ deleted: false }),
@@ -43,34 +295,30 @@ module.exports.getDashboard = async (req, res) => {
         { $unwind: { path: "$variants", preserveNullAndEmptyArrays: true } },
         { $group: { _id: null, sum: { $sum: { $ifNull: ["$variants.quantity", 0] } } } },
       ]),
-      Order.countDocuments({ deleted: false }),
+      Category.find({ deleted: false, parent: "" }).sort({ position: 1 }).select({ _id: 1, name: 1 }).lean(),
+      Product.find({ deleted: false }).select({ name: 1, variants: 1 }).lean(),
+      Product.find({}).select({ name: 1, variants: 1 }).lean(),
+    ]);
+
+    // Các query CẦN LỌC THEO THỜI GIAN
+    const [orderCount, revenueAgg, orderNewRaw, topOrdersRaw] = await Promise.all([
+      Order.countDocuments({ deleted: false, createdAt: { $gte: startDate, $lte: endDate } }),
       Order.aggregate([
-        { $match: { deleted: false, status: "delivered" } },
+        { $match: { deleted: false, status: "delivered", createdAt: { $gte: startDate, $lte: endDate } } },
         { $group: { _id: null, sum: { $sum: "$totalPrice" } } },
       ]),
-
-      Order.find({ deleted: false })
+      Order.find({ deleted: false, createdAt: { $gte: startDate, $lte: endDate } })
         .sort({ createdAt: -1 })
         .limit(10)
         .populate("userId", "fullName")
         .lean(),
-      Category.find({ deleted: false, parent: "" })
-        .sort({ position: 1 })
-        .select({ _id: 1, name: 1 })
-        .lean(),
-      Product.find({ deleted: false })
-        .select({ name: 1, variants: 1 })
-        .lean(),
-
       Order.find({
         deleted: false,
         payStatus: "paid",
         status: { $ne: "cancelled" },
+        createdAt: { $gte: startDate, $lte: endDate }
       })
         .select({ cart: 1, totalPrice: 1 })
-        .lean(),
-      Product.find({})
-        .select({ name: 1, variants: 1 })
         .lean(),
     ]);
 
@@ -85,34 +333,25 @@ module.exports.getDashboard = async (req, res) => {
     let soldOut = 0;
     let many = 0;
 
-    const computedTopProduct = products
-      .map((p) => {
-        const variants = p?.variants || [];
+    products.forEach((p) => {
+      const variants = p?.variants || [];
+      for (const v of variants) {
+        const q = Number(v?.quantity || 0);
+        if (q === 0) soldOut += 1;
+        else if (q <= thresholdAlmostOver) almostOver += 1;
+        else many += 1;
+      }
+    });
 
-        for (const v of variants) {
-          const q = Number(v?.quantity || 0);
-          if (q === 0) soldOut += 1;
-          else if (q <= thresholdAlmostOver) almostOver += 1;
-          else many += 1;
-        }
-
-        return { name: p?.name || "", sold: 0, profit: 0 };
-      })
-      .slice(0, 5);
-
+    const allProductMap = new Map((allProductsRaw || []).map((p) => [String(p?._id || ""), p]));
     const productMap = new Map(products.map((p) => [String(p?._id || ""), p]));
-    const allProductMap = new Map(
-      (allProductsRaw || []).map((p) => [String(p?._id || ""), p])
-    );
 
     const topAccumulator = new Map();
     for (const order of topOrdersRaw || []) {
       const cart = order?.cart || [];
       if (!cart.length) continue;
 
-      const lineTotals = cart.map(
-        (it) => (Number(it?.quantity || 0) * Number(it?.price || 0))
-      );
+      const lineTotals = cart.map((it) => Number(it?.quantity || 0) * Number(it?.price || 0));
       const sumLine = lineTotals.reduce((a, b) => a + b, 0);
       const orderTotal = Number(order?.totalPrice || 0);
 
@@ -122,19 +361,10 @@ module.exports.getDashboard = async (req, res) => {
 
         const qty = Number(it?.quantity || 0);
         const lineTotal = Number(lineTotals[idx] || 0);
-        const allocatedRevenue =
-          cart.length === 1
-            ? orderTotal
-            : sumLine > 0
-              ? (orderTotal * lineTotal) / sumLine
-              : lineTotal;
+        const allocatedRevenue = cart.length === 1 ? orderTotal : sumLine > 0 ? (orderTotal * lineTotal) / sumLine : lineTotal;
 
         if (!topAccumulator.has(pid)) {
-          topAccumulator.set(pid, {
-            productId: pid,
-            sold: 0,
-            profit: 0,
-          });
+          topAccumulator.set(pid, { productId: pid, sold: 0, profit: 0 });
         }
         const cur = topAccumulator.get(pid);
         cur.sold += qty;
@@ -151,38 +381,18 @@ module.exports.getDashboard = async (req, res) => {
         profit: Math.round(Number(item.profit || 0)),
       }));
 
-    const topProductFinal = topProduct.length ? topProduct : computedTopProduct;
-
     const formattedOrderNew = (orderNewRaw || []).map((order) => {
       const m = moment(order.createdAt);
       const orderCart = (order?.cart || []).map((it) => {
-        const product =
-          allProductMap.get(String(it?.productId || "")) ||
-          productMap.get(String(it?.productId || ""));
-        const variant = (product?.variants || []).find(
-          (v) => String(v?._id || "") === String(it?.variantId || "")
-        );
-        const variantImage = Array.isArray(variant?.images) && variant.images.length
-          ? variant.images[0]
-          : "";
-
+        const product = allProductMap.get(String(it?.productId || "")) || productMap.get(String(it?.productId || ""));
+        const variant = (product?.variants || []).find((v) => String(v?._id || "") === String(it?.variantId || ""));
         return {
-          avatar: it?.image || it?.avatar || variantImage || "",
+          avatar: it?.image || it?.avatar || (variant?.images?.[0] || ""),
           name: it?.name || product?.name || "",
           quantity: it?.quantity || 0,
           priceLast: it?.price || variant?.price || 0,
         };
       });
-
-      const statusKey = order?.status;
-      const mappedStatus = STATUS_MAP[statusKey] || "cancel";
-
-      const methodKey = order?.method;
-      const mappedMethod = METHOD_MAP[methodKey] || methodKey || "";
-
-      const payStatusKey = order?.payStatus;
-      const mappedPayStatus =
-        PAY_STATUS_MAP[payStatusKey] || payStatusKey || "";
 
       return {
         orderCode: order?.orderCode || "",
@@ -191,100 +401,251 @@ module.exports.getDashboard = async (req, res) => {
         note: order?.address || "",
         cart: orderCart,
         priceTotal: order?.totalPrice || 0,
-        nameMethod: mappedMethod,
-        nameStatusPay: mappedPayStatus,
-        status: mappedStatus,
+        nameMethod: METHOD_MAP[order?.method] || order?.method || "",
+        nameStatusPay: PAY_STATUS_MAP[order?.payStatus] || order?.payStatus || "",
+        status: STATUS_MAP[order?.status] || "cancel",
         formatTime: m.isValid() ? m.format("HH:mm") : "",
         formatDay: m.isValid() ? m.format("DD/MM/YYYY") : "",
       };
     });
 
-    const data = {
-      totalClient,
-      totalProduct,
-      dashboard,
-      categoryList: (categoryList || []).map((c) => ({
-        id: c._id,
-        name: c.name,
-      })),
-      almostOver,
-      soldOut,
-      many,
-      topProduct: topProductFinal,
-      orderNew: formattedOrderNew,
-    };
-
-    return res.status(200).json({ data });
-  } catch (error) {
-    return res.status(500).json({
-      message: "Lỗi khi lấy dashboard",
-      error: error.message,
+    res.status(200).json({
+      data: {
+        totalClient, totalProduct, dashboard, almostOver, soldOut, many,
+        categoryList: (categoryList || []).map((c) => ({ id: c._id, name: c.name })),
+        topProduct,
+        orderNew: formattedOrderNew,
+      }
     });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi khi lấy dashboard", error: error.message });
   }
 };
 
 module.exports.revenueChart = async (req, res) => {
   try {
-    const { currentMonth, currentYear, previousMonth, previousYear, arrayDay } = req.body || {};
+    const { filterType, startDate: sQ, endDate: eQ } = req.body || {};
+    
+    // Tận dụng logic lấy khoảng thời gian
+    let { startDate, endDate } = getTimeBounds(filterType, sQ, eQ);
+    
+    const startCurrent = moment(startDate);
+    const endCurrent = moment(endDate);
 
-    const safeArrayDay = Array.isArray(arrayDay) ? arrayDay.map((d) => Number(d)) : [];
-    if (!currentMonth || !currentYear || !previousMonth || !previousYear || !safeArrayDay.length) {
-      return res.status(400).json({ code: "error", message: "Thiếu dữ liệu biểu đồ doanh thu" });
+    // Tính toán mốc thời gian đối sánh của kỳ trước (Phục vụ vẽ 2 đường biểu đồ)
+    let startPrevious, endPrevious;
+    let labelCurrent = "Kỳ này";
+    let labelPrevious = "Kỳ trước";
+
+    if (filterType === "month") {
+      startPrevious = startCurrent.clone().subtract(1, "month").startOf("month");
+      endPrevious = startCurrent.clone().subtract(1, "month").endOf("month");
+      labelCurrent = `Tháng ${startCurrent.format("MM/YYYY")}`;
+      labelPrevious = `Tháng ${startPrevious.format("MM/YYYY")}`;
+    } else if (filterType === "year") {
+      startPrevious = startCurrent.clone().subtract(1, "year").startOf("year");
+      endPrevious = startCurrent.clone().subtract(1, "year").endOf("year");
+      labelCurrent = `Năm ${startCurrent.format("YYYY")}`;
+      labelPrevious = `Năm ${startPrevious.format("YYYY")}`;
+    } else if (filterType === "week") {
+      startPrevious = startCurrent.clone().subtract(1, "week").startOf("week");
+      endPrevious = startCurrent.clone().subtract(1, "week").endOf("week");
+      labelCurrent = "Tuần này";
+      labelPrevious = "Tuần trước";
+    } else {
+      // Trường hợp chọn khoảng ngày (range) -> lấy số ngày tương ứng lùi về quá khứ
+      const diffDays = endCurrent.diff(startCurrent, "days") + 1;
+      startPrevious = startCurrent.clone().subtract(diffDays, "days");
+      endPrevious = startCurrent.clone().subtract(1, "days");
     }
-
-    const startCurrent = new Date(Number(currentYear), Number(currentMonth) - 1, 1);
-    const endCurrent = new Date(Number(currentYear), Number(currentMonth), 1);
-    const startPrevious = new Date(Number(previousYear), Number(previousMonth) - 1, 1);
-    const endPrevious = new Date(Number(previousYear), Number(previousMonth), 1);
 
     const [orderCurrent, orderPrevious] = await Promise.all([
-      Order.find({
-        deleted: false,
-        payStatus: "paid",
-        createdAt: { $gte: startCurrent, $lt: endCurrent },
-      }).lean(),
-      Order.find({
-        deleted: false,
-        payStatus: "paid",
-        createdAt: { $gte: startPrevious, $lt: endPrevious },
-      }).lean(),
+      Order.find({ deleted: false, payStatus: "paid", createdAt: { $gte: startCurrent.toDate(), $lte: endCurrent.toDate() } }).lean(),
+      Order.find({ deleted: false, payStatus: "paid", createdAt: { $gte: startPrevious.toDate(), $lte: endPrevious.toDate() } }).lean(),
     ]);
 
-    const dataMonthCurrent = [];
-    const dataMonthPrevious = [];
+    let labels = [];
+    let dataMonthCurrent = [];
+    let dataMonthPrevious = [];
 
-    for (const day of safeArrayDay) {
-      let total = 0;
-      for (const item of orderCurrent) {
-        const orderDate = new Date(item.createdAt).getDate();
-        if (day === orderDate) total += item.totalPrice || 0;
+    // Tạo Trục X linh hoạt dựa vào FilterType
+    if (filterType === "year") {
+      // Lọc theo 12 tháng
+      for (let m = 1; m <= 12; m++) {
+        labels.push(`Tháng ${m}`);
+        
+        let sumCur = orderCurrent.filter(o => moment(o.createdAt).month() + 1 === m).reduce((a, b) => a + (b.totalPrice || 0), 0);
+        let sumPrev = orderPrevious.filter(o => moment(o.createdAt).month() + 1 === m).reduce((a, b) => a + (b.totalPrice || 0), 0);
+        
+        dataMonthCurrent.push(sumCur);
+        dataMonthPrevious.push(sumPrev);
       }
-      dataMonthCurrent.push(total);
-    }
+    } else {
+      // Lọc theo từng ngày (Dùng cho Tuần, Tháng, và Khoảng ngày)
+      let daysCount = filterType === "month" ? startCurrent.daysInMonth() : endCurrent.diff(startCurrent, "days") + 1;
+      if (filterType === "range" && daysCount > 62) daysCount = 31; // Giới hạn nếu khoảng ngày quá rộng tránh crash UI
 
-    for (const day of safeArrayDay) {
-      let total = 0;
-      for (const item of orderPrevious) {
-        const orderDate = new Date(item.createdAt).getDate();
-        if (day === orderDate) total += item.totalPrice || 0;
+      for (let i = 0; i < daysCount; i++) {
+        const curDayStr = startCurrent.clone().add(i, "days").format("DD/MM");
+        labels.push(curDayStr);
+
+        const currentTargetDate = startCurrent.clone().add(i, "days");
+        const previousTargetDate = startPrevious.clone().add(i, "days");
+
+        let sumCur = orderCurrent.filter(o => moment(o.createdAt).isSame(currentTargetDate, 'day')).reduce((a,b) => a + (b.totalPrice || 0), 0);
+        let sumPrev = orderPrevious.filter(o => moment(o.createdAt).isSame(previousTargetDate, 'day')).reduce((a,b) => a + (b.totalPrice || 0), 0);
+
+        dataMonthCurrent.push(sumCur);
+        dataMonthPrevious.push(sumPrev);
       }
-      dataMonthPrevious.push(total);
     }
 
     return res.status(200).json({
       code: "success",
+      labels,
+      labelCurrent,
+      labelPrevious,
       dataMonthCurrent,
       dataMonthPrevious,
     });
   } catch (error) {
-    return res.status(500).json({
-      code: "error",
-      message: "Lỗi khi lấy biểu đồ doanh thu",
-      error: error.message,
-    });
+    return res.status(500).json({ code: "error", message: "Lỗi biểu đồ doanh thu", error: error.message });
   }
 };
 
+
+
+// module.exports.revenueChart = async (req, res) => {
+//   try {
+//     const { currentMonth, currentYear, previousMonth, previousYear, arrayDay } = req.body || {};
+
+//     const safeArrayDay = Array.isArray(arrayDay) ? arrayDay.map((d) => Number(d)) : [];
+//     if (!currentMonth || !currentYear || !previousMonth || !previousYear || !safeArrayDay.length) {
+//       return res.status(400).json({ code: "error", message: "Thiếu dữ liệu biểu đồ doanh thu" });
+//     }
+
+//     const startCurrent = new Date(Number(currentYear), Number(currentMonth) - 1, 1);
+//     const endCurrent = new Date(Number(currentYear), Number(currentMonth), 1);
+//     const startPrevious = new Date(Number(previousYear), Number(previousMonth) - 1, 1);
+//     const endPrevious = new Date(Number(previousYear), Number(previousMonth), 1);
+
+//     const [orderCurrent, orderPrevious] = await Promise.all([
+//       Order.find({
+//         deleted: false,
+//         payStatus: "paid",
+//         createdAt: { $gte: startCurrent, $lt: endCurrent },
+//       }).lean(),
+//       Order.find({
+//         deleted: false,
+//         payStatus: "paid",
+//         createdAt: { $gte: startPrevious, $lt: endPrevious },
+//       }).lean(),
+//     ]);
+
+//     const dataMonthCurrent = [];
+//     const dataMonthPrevious = [];
+
+//     for (const day of safeArrayDay) {
+//       let total = 0;
+//       for (const item of orderCurrent) {
+//         const orderDate = new Date(item.createdAt).getDate();
+//         if (day === orderDate) total += item.totalPrice || 0;
+//       }
+//       dataMonthCurrent.push(total);
+//     }
+
+//     for (const day of safeArrayDay) {
+//       let total = 0;
+//       for (const item of orderPrevious) {
+//         const orderDate = new Date(item.createdAt).getDate();
+//         if (day === orderDate) total += item.totalPrice || 0;
+//       }
+//       dataMonthPrevious.push(total);
+//     }
+
+//     return res.status(200).json({
+//       code: "success",
+//       dataMonthCurrent,
+//       dataMonthPrevious,
+//     });
+//   } catch (error) {
+//     return res.status(500).json({
+//       code: "error",
+//       message: "Lỗi khi lấy biểu đồ doanh thu",
+//       error: error.message,
+//     });
+//   }
+// };
+
+module.exports.revenueChart = async (req, res) => {
+  try {
+    const { filterType, startDate: sQ, endDate: eQ } = req.body || {};
+    
+    // Lấy mốc thời gian của kỳ này
+    let { startDate, endDate } = getTimeBounds(filterType, sQ, eQ);
+    
+    const startCurrent = moment(startDate);
+    const endCurrent = moment(endDate);
+
+    let labelCurrent = "Doanh thu";
+
+    if (filterType === "month") {
+      labelCurrent = `Tháng ${startCurrent.format("MM/YYYY")}`;
+    } else if (filterType === "year") {
+      labelCurrent = `Năm ${startCurrent.format("YYYY")}`;
+    } else if (filterType === "week") {
+      labelCurrent = "Tuần này";
+    }
+
+    // Chỉ truy vấn hóa đơn thuộc kỳ hiện tại
+    const orderCurrent = await Order.find({ 
+      deleted: false, 
+      payStatus: "paid", 
+      createdAt: { $gte: startCurrent.toDate(), $lte: endCurrent.toDate() } 
+    }).lean();
+
+    let labels = [];
+    let dataMonthCurrent = [];
+
+    if (filterType === "year") {
+      // Thống kê theo 12 tháng
+      for (let m = 1; m <= 12; m++) {
+        labels.push(`Tháng ${m}`);
+        
+        let sumCur = orderCurrent
+          .filter(o => moment(o.createdAt).month() + 1 === m)
+          .reduce((a, b) => a + (b.totalPrice || 0), 0);
+        
+        dataMonthCurrent.push(sumCur);
+      }
+    } else {
+      // Thống kê theo từng ngày (Cho Tuần, Tháng, Khoảng ngày)
+      let daysCount = filterType === "month" ? startCurrent.daysInMonth() : endCurrent.diff(startCurrent, "days") + 1;
+      if (filterType === "range" && daysCount > 31) daysCount = 31; 
+
+      for (let i = 0; i < daysCount; i++) {
+        const currentTargetDate = startCurrent.clone().add(i, "days");
+
+        labels.push(currentTargetDate.format("DD/MM"));
+
+        let sumCur = orderCurrent
+          .filter(o => moment(o.createdAt).format("YYYY-MM-DD") === currentTargetDate.format("YYYY-MM-DD"))
+          .reduce((a, b) => a + (b.totalPrice || 0), 0);
+
+        dataMonthCurrent.push(sumCur);
+      }
+    }
+
+    return res.status(200).json({
+      code: "success",
+      labels,
+      labelCurrent,
+      dataMonthCurrent,
+    });
+  } catch (error) {
+    return res.status(500).json({ code: "error", message: "Lỗi biểu đồ doanh thu", error: error.message });
+  }
+};
 module.exports.inventory = async (req, res) => {
   try {
     const categoryCurrent = req.query.category || "";
