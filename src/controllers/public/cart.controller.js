@@ -95,15 +95,26 @@ module.exports.addProductToCart = async (req, res) => {
     const rawEng = req.body?.engraving;
 
     const normalizeEngraving = (eng) => {
-      if (!eng || typeof eng !== "object") return { text: "", fontId: "", fontSizePx: undefined };
+      if (!eng || typeof eng !== "object") return { text: "", fontId: "", fontSizePx: undefined, previewImage: "" };
       const text = String(eng.text || "")
         .replace(/\s+/g, " ")
         .trim();
       const fontId = String(eng.fontId || "").trim();
       const fontSizePx = eng.fontSizePx !== undefined ? Number(eng.fontSizePx) : undefined;
-      return { text, fontId, fontSizePx };
+      const previewImage = String(eng.previewImage || "").trim();
+      // Reject inline data URLs here; client should upload fallback thumbnails first
+      if (previewImage && previewImage.startsWith('data:')) {
+        // 400 Bad Request - instruct client to upload data URL via /engraving/upload first
+        throw new Error('previewImage must be an URL; upload data URLs via /api/public/engraving/upload before adding to cart');
+      }
+      return { text, fontId, fontSizePx, previewImage };
     };
-    const engraving = normalizeEngraving(rawEng);
+    let engraving;
+    try {
+      engraving = normalizeEngraving(rawEng);
+    } catch (e) {
+      return res.status(400).json({ message: e.message });
+    }
 
     if (!productId) return res.status(400).json({ message: "Missing productId" });
     const qty = Number.isFinite(Number(quantity)) ? Math.max(1, Number(quantity)) : 1;
@@ -145,15 +156,15 @@ module.exports.addProductToCart = async (req, res) => {
     // Do not merge into the existing cart line.
     let createdLineId = null;
     if (buyNow === true) {
-      const newLine = {
-        productId: product._id,
-        variantId: variant._id,
-        quantity: 1,
-        price,
-        engraving,
-        isBuyNow: true,
-        createdAt: new Date(),
-      };
+        const newLine = {
+          productId: product._id,
+          variantId: variant._id,
+          quantity: 1,
+          price,
+          engraving,
+          isBuyNow: true,
+          createdAt: new Date(),
+        };
       cart.products.push(newLine);
       // Use the actual mongoose subdocument id assigned on push
       const pushed = cart.products[cart.products.length - 1];
@@ -316,14 +327,18 @@ module.exports.patchProduct = async (req, res) => {
       const raw = req.body.engraving;
       if (raw === null) {
         // clear engraving
-        existing.engraving = { text: "", fontId: "", fontSizePx: undefined };
+        existing.engraving = { text: "", fontId: "", fontSizePx: undefined, previewImage: "" };
       } else if (typeof raw === "object") {
         const text = String(raw.text || "")
           .replace(/\s+/g, " ")
           .trim();
         const fontId = String(raw.fontId || "").trim();
         const fontSizePx = raw.fontSizePx !== undefined ? Number(raw.fontSizePx) : undefined;
-        existing.engraving = { text, fontId, fontSizePx };
+        const previewImage = String(raw.previewImage || "").trim();
+        if (previewImage && previewImage.startsWith('data:')) {
+          return res.status(400).json({ message: 'previewImage must be a URL. Upload data URLs via /api/public/engraving/upload first' });
+        }
+        existing.engraving = { text, fontId, fontSizePx, previewImage };
       }
     }
 
