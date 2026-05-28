@@ -59,6 +59,8 @@ const orderItemSchema = new mongoose.Schema({
     text: { type: String, default: "" },
     fontId: { type: String, default: "" },
     fontSizePx: Number,
+    // persist preview image so admin UI can show proof of engraving
+    previewImage: { type: String, default: "" },
   },
   // Whether this line has been restocked after a cancel to avoid double-restock.
   stockReleased: { type: Boolean, default: false },

@@ -29,4 +29,5 @@ module.exports = {
   cloudinary,
   storage,
   collectionStorage,
+  // helper to upload via uploader directly is available on cloudinary
 };

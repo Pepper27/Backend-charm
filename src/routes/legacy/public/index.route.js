@@ -8,6 +8,7 @@ const categoryController = require("../../../controllers/public/category.control
 const publicAuthMiddleware = require("../../../middlewares/public/auth.middleware");
 const checkoutController = require("../../../controllers/public/checkout.controller");
 const zaloController = require("../../../controllers/public/zalo.controller");
+const engravingController = require("../../../controllers/public/engraving.controller");
 const wishlistRouter = require("./wishlist.route");
 
 // Attach client identity when token is present.
@@ -41,6 +42,11 @@ router.delete("/cart/bundles/:bundleId", cartController.deleteBundle);
 router.post("/cart/products", cartController.addProductToCart);
 router.patch("/cart/products/:lineId", cartController.patchProduct);
 router.delete("/cart/products/:lineId", cartController.deleteProduct);
+
+// Engraving render endpoint (server-side composition)
+router.post('/engraving/render', engravingController.render);
+// Upload client-generated data URLs (thumbnails) -> Cloudinary
+router.post('/engraving/upload', engravingController.uploadDataUrl);
 
 router.get("/designs", designController.listDesigns);
 router.post("/designs", designController.saveDesignAndAddToCart);
