@@ -8,7 +8,18 @@ router.get("/", authMiddleware.verifyToken, async (req, res) => {
     try {
         const page = Math.max(1, parseInt(req.query.page) || 1);
         const limit = req.query.limit ? Math.max(1, parseInt(req.query.limit)) : null;
+        const keyword = (req.query.keyword || "").trim();
         const filter = { deleted: false };
+        if (keyword) {
+            // escape regex special chars
+            const esc = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const re = new RegExp(esc, 'i');
+            filter.$or = [
+                { name: re },
+                { description: re },
+                { slug: re },
+            ];
+        }
 
         const total = await Material.countDocuments(filter);
         let list;
