@@ -73,7 +73,7 @@ module.exports.getCategories = async (req, res) => {
     }
     if (categoryId) {
       find.$or = [
-        { _id: categoryId },    
+        // { _id: categoryId },    
         { parent: categoryId }  
       ];
     }
