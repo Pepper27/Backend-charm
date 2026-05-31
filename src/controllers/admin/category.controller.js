@@ -62,6 +62,7 @@ module.exports.getCategories = async (req, res) => {
     const page = req.query.page ? parseInt(req.query.page) : null;
     const limit = req.query.limit ? parseInt(req.query.limit) : null;
     const keyword = req.query.keyword || "";
+    const { categoryId, startDate, endDate } = req.query;
     const find = { deleted: false };
     if (keyword) {
       const slugKeyword = slugify(keyword, {
@@ -70,22 +71,37 @@ module.exports.getCategories = async (req, res) => {
       });
       find.slug = { $regex: slugKeyword, $options: "i" };
     }
+    if (categoryId) {
+      find.$or = [
+        { _id: categoryId },    
+        { parent: categoryId }  
+      ];
+    }
+    if (startDate || endDate) {
+      find.createdAt = {};
+      if (startDate) {
+        find.createdAt.$gte = new Date(`${startDate}T00:00:00.000Z`);
+      }
+      if (endDate) {
+        find.createdAt.$lte = new Date(`${endDate}T23:59:59.999Z`);
+      }
+    }
     let categoryList;
     let categoryTotal;
     if (!page && !limit) {
-      // Trả về toàn bộ danh mục nếu không truyền page/limit
       categoryList = await Category.find(find).sort({ position: 1 }).lean();
       categoryTotal = categoryList.length;
     } else {
       const safePage = page || 1;
-      const safeLimit = limit || 1000;
+      const safeLimit = limit || 4; 
       const skip = (safePage - 1) * safeLimit;
+
       categoryList = await Category.find(find)
         .sort({ position: 1 })
         .skip(skip)
         .limit(safeLimit)
         .lean();
-      categoryTotal = await Category.countDocuments({ deleted: false });
+      categoryTotal = await Category.countDocuments(find);
     }
     for (const item of categoryList) {
       if (item.createdBy) {
@@ -103,15 +119,16 @@ module.exports.getCategories = async (req, res) => {
       item.createdAtFormat = moment(item.createdAt).format("HH:mm - DD/MM/YYYY");
       item.updatedAtFormat = moment(item.updatedAt).format("HH:mm - DD/MM/YYYY");
     }
+
     return res.status(200).json({
       data: categoryList,
       total: categoryTotal,
       currentPage: page || 1,
-      totalPage: limit ? Math.ceil(categoryTotal / limit) : 1,
+      totalPage: limit ? Math.ceil(categoryTotal / limit) : (page ? Math.ceil(categoryTotal / 4) : 1),
     });
   } catch (error) {
     return res.status(500).json({
-      message: "Lỗi",
+      message: "Lỗi hệ thống",
       error: error.message,
     });
   }
