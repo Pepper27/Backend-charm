@@ -72,8 +72,7 @@ module.exports.getCategories = async (req, res) => {
       find.slug = { $regex: slugKeyword, $options: "i" };
     }
     if (categoryId) {
-      find.$or = [
-        { _id: categoryId },    
+      find.$or = [ 
         { parent: categoryId }  
       ];
     }

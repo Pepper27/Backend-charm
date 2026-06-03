@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const { Types } = require("mongoose");
-
+slug = require('mongoose-slug-updater')
+mongoose.plugin(slug)
 // Snapshot schemas for mix-charm bundle orders (bracelet + multiple charms).
 const orderBundleItemSchema = new mongoose.Schema(
   {
@@ -77,6 +78,11 @@ const schema = new mongoose.Schema(
 
     // Contact snapshot at checkout time.
     fullName: { type: String, default: "" },
+    slug:{
+      type: String, 
+      slug: "fullName",
+      unique:true
+    },
     email: { type: String, default: "" },
     phone: String,
     address: String,

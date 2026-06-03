@@ -1,7 +1,7 @@
 const Order = require("../../models/order.model");
 const Product = require("../../models/product.model");
 const mongoose = require("mongoose");
-
+const slugify = require("slugify");
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const inferPayStatus = (o) => {
@@ -90,11 +90,13 @@ module.exports.getOrders = async (req, res) => {
 
     if (keyword) {
       const rx = new RegExp(escapeRegex(keyword), "i");
+      const keywordSlug = slugify(keyword, { lower: true, strict: true, locale: "vi" });
+      const sl = new RegExp(keywordSlug.replace(/-/g, ".*"), "i"); 
       find.$or = [
         { orderCode: rx },
         { phone: rx },
         { email: rx },
-        { fullName: rx },
+        { slug: sl },
         { address: rx },
       ];
     }
