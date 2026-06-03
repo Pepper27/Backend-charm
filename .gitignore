@@ -1,8 +1,46 @@
-/node_modules
-/.env
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Cache
+.cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# Temporary
+tmp/
+temp/
+
+# Postman collections
 Charm-Jewelry-API-Postman.json
 charm-full-api-collection.json
+
+# Debug scripts
 check-db.js
 create-sample-data.js
 debug-filters.js
