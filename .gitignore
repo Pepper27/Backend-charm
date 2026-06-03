@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 /node_modules
 /.env
 .DS_Store
@@ -6,3 +7,51 @@ charm-full-api-collection.json
 check-db.js
 create-sample-data.js
 debug-filters.js
+=======
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Cache
+.cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# Temporary
+tmp/
+temp/
+
+# Postman collections
+Charm-Jewelry-API-Postman.json
+charm-full-api-collection.json
+
+# Debug scripts
+check-db.js
+create-sample-data.js
+debug-filters.js
+>>>>>>> 2e649376b0c0761ae8c75e225aa776d86739179d

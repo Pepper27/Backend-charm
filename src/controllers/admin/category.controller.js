@@ -72,7 +72,12 @@ module.exports.getCategories = async (req, res) => {
       find.slug = { $regex: slugKeyword, $options: "i" };
     }
     if (categoryId) {
+<<<<<<< HEAD
       find.$or = [ 
+=======
+      find.$or = [
+        // { _id: categoryId },    
+>>>>>>> 2e649376b0c0761ae8c75e225aa776d86739179d
         { parent: categoryId }  
       ];
     }

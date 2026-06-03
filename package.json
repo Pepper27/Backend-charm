@@ -29,7 +29,11 @@
     "nodemailer": "^8.0.2",
     "nodemon": "^3.1.14",
     "sharp": "^0.34.5",
+<<<<<<< HEAD
     "slugify": "^1.6.9"
+=======
+    "slugify": "^1.6.8"
+>>>>>>> 2e649376b0c0761ae8c75e225aa776d86739179d
   },
   "devDependencies": {
     "eslint": "^8.57.1",

@@ -4,6 +4,7 @@ const Size = require("../../../models/size.model");
 const AccountAdmin = require("../../../models/accountAdmin.model");
 const moment = require("moment");
 router.get("/", authMiddleware.verifyToken, async (req, res) => {
+<<<<<<< HEAD
 	try {
 		const list = await Size.find({ deleted: false }).lean();
 		for (const item of list) {
@@ -27,6 +28,49 @@ router.get("/", authMiddleware.verifyToken, async (req, res) => {
 	} catch (err) {
 		res.status(500).json({ message: "Lỗi server" });
 	}
+=======
+    try {
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limit = req.query.limit ? Math.max(1, parseInt(req.query.limit)) : null;
+        const keyword = (req.query.keyword || "").trim();
+        const filter = { deleted: false };
+        if (keyword) {
+            const esc = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const re = new RegExp(esc, 'i');
+            filter.$or = [
+                { name: re },
+                { description: re },
+                { slug: re },
+            ];
+        }
+
+        const total = await Size.countDocuments(filter);
+        let list;
+        if (limit) {
+            list = await Size.find(filter).skip((page - 1) * limit).limit(limit).lean();
+        } else {
+            list = await Size.find(filter).lean();
+        }
+
+        for (const item of list) {
+        if (item.createdBy) {
+            const createdByName = await AccountAdmin.findOne({ _id: item.createdBy });
+            item.createdByName = createdByName?.fullName;
+        }
+        if (item.updatedBy) {
+            const updatedByName = await AccountAdmin.findOne({ _id: item.updatedBy });
+            item.updatedByName = updatedByName?.fullName;
+        }
+        item.createdAtFormat = moment(item.createdAt).format("HH:mm - DD/MM/YYYY");
+        item.updatedAtFormat = moment(item.updatedAt).format("HH:mm - DD/MM/YYYY");
+        }
+
+        const totalPage = limit ? Math.max(1, Math.ceil(total / limit)) : 1;
+        res.status(200).json({ data: list, total, totalPage, page });
+    } catch (err) {
+        res.status(500).json({ message: "Lỗi server" });
+    }
+>>>>>>> 2e649376b0c0761ae8c75e225aa776d86739179d
 });
 
 router.get("/:id", authMiddleware.verifyToken, async (req, res) => {
