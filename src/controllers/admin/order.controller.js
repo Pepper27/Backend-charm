@@ -9,14 +9,10 @@ const inferPayStatus = (o) => {
     if (!o) return "unpaid";
     // If explicitly marked paid in DB, respect it.
     if (o.payStatus === "paid") return "paid";
-    // Otherwise, infer paid from method/provider/captured amount.
-    const method = String(o.method || "").trim().toLowerCase();
-    const provider = String((o.payment && o.payment.provider) || "").trim().toLowerCase();
+    // Consider captured amount or provider transaction id as proof of payment.
     const captured = Number((o.payment && o.payment.capturedAmount) || 0);
     const zpTransId = String((o.payment && o.payment.zpTransId) || "").trim();
-    const appTransId = String((o.payment && o.payment.appTransId) || "").trim();
-    if (method.includes("zalopay") || provider.includes("zalopay") || captured > 0) return "paid";
-    if (zpTransId || appTransId) return "paid";
+    if (captured > 0 || zpTransId) return "paid";
     return "unpaid";
   } catch (e) {
     return "unpaid";
@@ -29,10 +25,8 @@ const buildPayStatusFind = (payStatus) => {
 
   const paidOr = [
     { payStatus: "paid" },
-    { method: { $regex: /zalopay/i } },
     { "payment.capturedAmount": { $gt: 0 } },
     { "payment.zpTransId": { $exists: true, $ne: "" } },
-    { "payment.appTransId": { $exists: true, $ne: "" } },
   ];
 
   if (v === "paid") return { $or: paidOr };

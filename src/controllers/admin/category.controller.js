@@ -72,13 +72,10 @@ module.exports.getCategories = async (req, res) => {
       find.slug = { $regex: slugKeyword, $options: "i" };
     }
     if (categoryId) {
-<<<<<<< HEAD
-      find.$or = [ 
-=======
+      // include items whose parent is the given category (and optionally the category itself)
       find.$or = [
-        // { _id: categoryId },    
->>>>>>> 2e649376b0c0761ae8c75e225aa776d86739179d
-        { parent: categoryId }  
+        // { _id: categoryId }, // enable if you want to include the category by id as well
+        { parent: categoryId },
       ];
     }
     if (startDate || endDate) {
@@ -97,7 +94,7 @@ module.exports.getCategories = async (req, res) => {
       categoryTotal = categoryList.length;
     } else {
       const safePage = page || 1;
-      const safeLimit = limit || 4; 
+      const safeLimit = limit || 4;
       const skip = (safePage - 1) * safeLimit;
 
       categoryList = await Category.find(find)
@@ -128,7 +125,7 @@ module.exports.getCategories = async (req, res) => {
       data: categoryList,
       total: categoryTotal,
       currentPage: page || 1,
-      totalPage: limit ? Math.ceil(categoryTotal / limit) : (page ? Math.ceil(categoryTotal / 4) : 1),
+      totalPage: limit ? Math.ceil(categoryTotal / limit) : page ? Math.ceil(categoryTotal / 4) : 1,
     });
   } catch (error) {
     return res.status(500).json({

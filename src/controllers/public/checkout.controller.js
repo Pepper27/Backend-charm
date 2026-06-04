@@ -488,11 +488,17 @@ module.exports.checkoutBundles = async (req, res) => {
       amount: totalPrice,
       clientId,
     });
+    // Save Zalopay identifiers and a 2-hour payment expiry so frontend can show
+    // a "Thanh toán ngay" button and auto-cancel job can expire the order.
+    const PAYMENT_WINDOW_MS = Number(process.env.PAYMENT_WINDOW_MS || 2 * 60 * 60 * 1000); // 2 hours default
     await Order.updateOne(
       { _id: order._id },
       {
         $set: {
           "payment.appTransId": zlp.appTransId,
+          "payment.orderUrl": zlp.orderUrl || "",
+          "payment.zpTransToken": zlp.zpTransToken || "",
+          "payment.expiresAt": new Date(Date.now() + PAYMENT_WINDOW_MS),
         },
       }
     );

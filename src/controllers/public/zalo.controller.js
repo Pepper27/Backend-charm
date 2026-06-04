@@ -19,18 +19,28 @@ const zalopayConfig = () => {
 const pullCartByOrderSnapshot = async (order) => {
   try {
     if (!order || !order.checkoutSnapshot) return;
-    const cartKey = order.userId ? { userId: String(order.userId) } : { guestId: String(order.guestId || "") };
-    const { bundleIds = [], productLineIds = [], buyNowVariantIds = [] } = order.checkoutSnapshot || {};
+    const cartKey = order.userId
+      ? { userId: String(order.userId) }
+      : { guestId: String(order.guestId || "") };
+    const {
+      bundleIds = [],
+      productLineIds = [],
+      buyNowVariantIds = [],
+    } = order.checkoutSnapshot || {};
     const update = {};
     if (bundleIds && bundleIds.length) update.$pull = { bundles: { bundleId: { $in: bundleIds } } };
     if (productLineIds && productLineIds.length) update.$pull = update.$pull || {};
-    if (productLineIds && productLineIds.length) update.$pull.products = { _id: { $in: productLineIds } };
+    if (productLineIds && productLineIds.length)
+      update.$pull.products = { _id: { $in: productLineIds } };
 
     if (buyNowVariantIds && buyNowVariantIds.length) {
       update.$pull = update.$pull || {};
       const existing = update.$pull.products || {};
       update.$pull.products = {
-        $or: [...(existing && Object.keys(existing).length ? [existing] : []), { variantId: { $in: buyNowVariantIds } }],
+        $or: [
+          ...(existing && Object.keys(existing).length ? [existing] : []),
+          { variantId: { $in: buyNowVariantIds } },
+        ],
       };
     }
 
@@ -58,7 +68,9 @@ module.exports.webhook = async (req, res) => {
     }
 
     let data = null;
-    try { data = JSON.parse(dataStr); } catch (e) { }
+    try {
+      data = JSON.parse(dataStr);
+    } catch (e) {}
     if (!data) return res.status(400).json({ message: "Invalid data payload" });
     console.log("ZALOPAY WEBHOOK DATA:", data);
 
@@ -67,19 +79,31 @@ module.exports.webhook = async (req, res) => {
     console.log("APP TRANS ID:", appTransId);
     // embed_data may include orderCode
     let embed = {};
-    try { embed = JSON.parse(String(data.embed_data || "{}")); } catch (e) { embed = {}; }
+    try {
+      embed = JSON.parse(String(data.embed_data || "{}"));
+    } catch (e) {
+      embed = {};
+    }
     const orderCode = String(embed.orderCode || data.order_code || "");
 
     // Try find by appTransId or orderCode
-    const query = appTransId ? { "payment.appTransId": appTransId } : (orderCode ? { orderCode } : null);
+    const query = appTransId
+      ? { "payment.appTransId": appTransId }
+      : orderCode
+        ? { orderCode }
+        : null;
     if (!query) return res.status(400).json({ message: "Missing identifiers" });
 
     const order = await Order.findOne(query);
     console.log("ORDER FOUND:", order);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // If already paid, return OK (idempotent)
-    if (order.payStatus === "paid") return res.status(200).json({ message: "Already paid" });
+    // If already paid, return OK (idempotent) unless this callback contains refund info
+    const providerRefundId =
+      data.refund_id || data.refund_trans_id || data.zp_refund_id || data.refundId || null;
+    const eventType = String(data.type || "").toLowerCase();
+    if (order.payStatus === "paid" && !providerRefundId && !eventType.includes("refund"))
+      return res.status(200).json({ message: "Already paid" });
 
     const amount = safeNum(data.amount || data.total || 0);
     const zpTransId = data.zp_trans_id || data.zp_trans_token || "";
@@ -116,7 +140,7 @@ module.exports.webhook = async (req, res) => {
           "payment.provider": "zalopay",
           "payment.capturedAmount": amount || order.totalPrice || 0, // Dùng totalPrice nếu amount từ zalo bị trống
           "payment.zpTransId": zpTransId,
-          "payment.appTransId": appTransId // Cập nhật ngược lại ID này nếu trong DB chưa có
+          "payment.appTransId": appTransId, // Cập nhật ngược lại ID này nếu trong DB chưa có
         },
         $push: {
           statusHistory: {
@@ -133,6 +157,39 @@ module.exports.webhook = async (req, res) => {
     // Cleanup cart according to snapshot
     await pullCartByOrderSnapshot(order);
 
+    // If this webhook contains refund info, try to reconcile refund entry in order.payment.refunds
+    try {
+      if (providerRefundId || eventType.includes("refund")) {
+        const fresh = await Order.findById(order._id).lean();
+        const pendingRefunds = Array.isArray(fresh.payment?.refunds) ? fresh.payment.refunds : [];
+        let matchedIndex = -1;
+        if (providerRefundId) {
+          matchedIndex = pendingRefunds.findIndex(
+            (r) => String(r.providerRefundId || "") === String(providerRefundId)
+          );
+        }
+        if (matchedIndex === -1) {
+          matchedIndex = pendingRefunds.findIndex(
+            (r) => r.status === "pending" && Number(r.amount || 0) === Number(amount || 0)
+          );
+        }
+        if (matchedIndex !== -1) {
+          const key = `payment.refunds.${matchedIndex}`;
+          const update = {};
+          update[`${key}.status`] = "succeeded";
+          update[`${key}.providerResponse`] = data;
+          if (providerRefundId) update[`${key}.providerRefundId`] = providerRefundId;
+          await Order.updateOne({ _id: order._id }, { $set: update });
+          await Order.updateOne(
+            { _id: order._id },
+            { $set: { "payment.refundStatus": "succeeded" } }
+          );
+        }
+      }
+    } catch (e) {
+      console.error("Error updating refund from webhook:", e);
+    }
+
     return res.status(200).json({ message: "OK" });
   } catch (err) {
     console.error("Zalo webhook error:", err);
@@ -147,7 +204,8 @@ module.exports.confirm = async (req, res) => {
     const appTransId = String(body.appTransId || body.app_trans_id || "").trim();
     const orderCode = String(body.orderCode || "").trim();
     const cfg = zalopayConfig();
-    if (!cfg.appId || !cfg.key1) return res.status(500).json({ message: "ZaloPay credentials not configured" });
+    if (!cfg.appId || !cfg.key1)
+      return res.status(500).json({ message: "ZaloPay credentials not configured" });
 
     // Determine which appTransId to query: prefer provided, else fetch from order via orderCode
     let resolvedAppTransId = appTransId;
@@ -170,7 +228,11 @@ module.exports.confirm = async (req, res) => {
     params.set("mac", mac);
 
     const url = `${cfg.domain.replace(/\/$/, "")}/v2/query`;
-    const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString() });
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
     const data = await resp.json().catch(() => null);
     if (!resp.ok || !data) return res.status(500).json({ message: "ZaloPay query failed" });
 

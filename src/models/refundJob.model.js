@@ -9,6 +9,10 @@ const schema = new mongoose.Schema(
     provider: { type: String, required: true },
     // payload needed by provider adapter (provider-specific)
     payload: mongoose.Schema.Types.Mixed,
+    // Optional idempotency key to avoid double refunds
+    idempotencyKey: { type: String, default: "" },
+    // Provider refund identifier once available
+    providerRefundId: { type: String, default: "" },
     // job status and attempts
     status: {
       type: String,
