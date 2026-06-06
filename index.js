@@ -6,6 +6,7 @@ dotenv.config();
 
 const { connectDB } = require("./src/config/database.js");
 const apiRoutes = require("./src/routes/index.route.js");
+const { startScheduler } = require("./src/jobs/autoCancelJob.js");
 
 const app = express();
 const port = 3861;
@@ -13,6 +14,7 @@ app.set("trust proxy", 1);
 
 const start = async () => {
   await connectDB();
+  startScheduler();
 
   app.listen(port, () => {
     console.log(`Server chạy tại http://localhost:${port}`);

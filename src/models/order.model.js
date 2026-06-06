@@ -127,6 +127,11 @@ const schema = new mongoose.Schema(
       providerChargeId: { type: String, default: "" },
       // ZaloPay order query identifiers
       appTransId: { type: String, default: "" },
+      // Public URL to continue payment (for "Thanh toán ngay" button) and ephemeral token
+      orderUrl: { type: String, default: "" },
+      zpTransToken: { type: String, default: "" },
+      // Expiration time for pending external payments (e.g. Zalopay). Auto-cancel job uses this.
+      expiresAt: { type: Date },
       zpTransId: { type: String, default: "" },
       refundStatus: {
         type: String,

@@ -7,23 +7,8 @@ const mongoose = require("mongoose");
 const RefundJob = require("../models/refundJob.model");
 const Order = require("../models/order.model");
 
-// Mock Zalopay adapter - replace with real provider later
-const zalopayAdapter = async (payload) => {
-  // payload: { amount, providerChargeId }
-  // Simulate success most of the time, transient failure sometimes.
-  const r = Math.random();
-  if (r < 0.8) {
-    return { success: true, id: `mock_ref_${Date.now()}`, raw: { simulated: true } };
-  }
-  if (r < 0.95) {
-    const err = new Error("Transient network error");
-    err.transient = true;
-    throw err;
-  }
-  const err = new Error("Permanent provider refusal");
-  err.transient = false;
-  throw err;
-};
+// Real ZaloPay adapter
+const { zalopayRefund } = require("../adapters/zalopay.adapter");
 
 const PROCESS_INTERVAL_MS = Number(process.env.REFUND_WORKER_INTERVAL_MS || 5000);
 const MAX_CONCURRENT = Number(process.env.REFUND_WORKER_CONCURRENCY || 2);
@@ -40,22 +25,97 @@ async function processOne() {
   if (!job) return false;
 
   try {
-    const res = await zalopayAdapter(job.payload);
-    job.status = "succeeded";
-    job.processedAt = new Date();
-    job.result = res;
-    await job.save();
+    // Idempotency: check if order already has a successful refund with same idempotencyKey or providerRefundId
+    const order = await Order.findById(job.orderId).lean();
+    if (!order) {
+      job.status = "failed";
+      job.lastError = "Order not found";
+      await job.save();
+      return true;
+    }
 
-    // Update order payment record
-    await Order.updateOne(
-      { _id: job.orderId },
-      {
-        $set: {
-          "payment.refundStatus": "succeeded",
-        },
-        $push: { "payment.refunds": { amount: job.payload.amount, createdAt: new Date(), status: "succeeded", providerResponse: res } },
+    const already = (
+      order.payment && Array.isArray(order.payment.refunds) ? order.payment.refunds : []
+    ).find((r) => {
+      if (!r) return false;
+      if (job.idempotencyKey && r.idempotencyKey && r.idempotencyKey === job.idempotencyKey)
+        return true;
+      if (job.providerRefundId && r.providerRefundId && r.providerRefundId === job.providerRefundId)
+        return true;
+      return false;
+    });
+    if (already && (already.status === "succeeded" || already.status === "processing")) {
+      // Nothing to do
+      job.status = "succeeded";
+      job.processedAt = new Date();
+      job.result = { note: "skipped - already processed" };
+      await job.save();
+      return true;
+    }
+
+    // Call provider adapter
+    const res = await zalopayRefund({
+      appTransId: job.payload.appTransId || job.payload.providerChargeId || job.orderCode,
+      amount: job.payload.amount,
+      description: `Refund for order ${job.orderCode}`,
+      idempotencyKey: job.idempotencyKey || `${job.orderId}_${job._id}`,
+    });
+
+    job.result = res;
+    job.processedAt = new Date();
+
+    if (res && res.status === "succeeded") {
+      job.status = "succeeded";
+      if (res.providerRefundId) job.providerRefundId = String(res.providerRefundId);
+      await job.save();
+
+      // Update order payment record with provider info
+      await Order.updateOne(
+        { _id: job.orderId },
+        {
+          $set: { "payment.refundStatus": "succeeded" },
+          $push: {
+            "payment.refunds": {
+              amount: job.payload.amount,
+              createdAt: new Date(),
+              status: "succeeded",
+              providerResponse: res,
+              providerRefundId: res.providerRefundId || null,
+              idempotencyKey: job.idempotencyKey || `${job.orderId}_${job._id}`,
+            },
+          },
+        }
+      );
+    } else {
+      // treat as failure (res may contain more info)
+      job.lastError = res && res.message ? String(res.message) : "refund_failed";
+      const isTransient = false; // treat provider non-success as permanent unless adapter throws transient
+      job.attempts = (job.attempts || 0) + 1;
+      if (isTransient && job.attempts < (job.maxAttempts || 5)) {
+        job.status = "pending";
+        const delay = Math.min(60 * 60 * 1000, Math.pow(2, job.attempts) * 1000);
+        job.scheduledAt = new Date(Date.now() + delay);
+      } else {
+        // move to manual review so admin can inspect and refund manually
+        job.status = "manual_review";
+        await Order.updateOne(
+          { _id: job.orderId },
+          {
+            $set: { "payment.refundStatus": "manual_review" },
+            $push: {
+              "payment.refunds": {
+                amount: job.payload.amount,
+                createdAt: new Date(),
+                status: "manual_review",
+                providerResponse: res,
+                idempotencyKey: job.idempotencyKey || `${job.orderId}_${job._id}`,
+              },
+            },
+          }
+        );
+        await job.save();
       }
-    );
+    }
   } catch (err) {
     // transient errors -> retry
     job.attempts = (job.attempts || 0) + 1;
@@ -73,7 +133,15 @@ async function processOne() {
         { _id: job.orderId },
         {
           $set: { "payment.refundStatus": "manual_review" },
-          $push: { "payment.refunds": { amount: job.payload.amount, createdAt: new Date(), status: "manual_review", providerResponse: { error: job.lastError } } },
+          $push: {
+            "payment.refunds": {
+              amount: job.payload.amount,
+              createdAt: new Date(),
+              status: "manual_review",
+              providerResponse: { error: job.lastError },
+              idempotencyKey: job.idempotencyKey || `${job.orderId}_${job._id}`,
+            },
+          },
         }
       );
     } else {
@@ -83,7 +151,15 @@ async function processOne() {
         { _id: job.orderId },
         {
           $set: { "payment.refundStatus": "failed" },
-          $push: { "payment.refunds": { amount: job.payload.amount, createdAt: new Date(), status: "failed", providerResponse: { error: job.lastError } } },
+          $push: {
+            "payment.refunds": {
+              amount: job.payload.amount,
+              createdAt: new Date(),
+              status: "failed",
+              providerResponse: { error: job.lastError },
+              idempotencyKey: job.idempotencyKey || `${job.orderId}_${job._id}`,
+            },
+          },
         }
       );
     }

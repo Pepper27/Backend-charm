@@ -9,11 +9,12 @@ const normalizeStatus = (value) => String(value || "").trim();
 const inferPayStatus = (o) => {
   try {
     if (!o) return "unpaid";
-    if (o.payStatus) return o.payStatus;
-    const method = String(o.method || "").trim().toLowerCase();
-    const provider = String((o.payment && o.payment.provider) || "").trim().toLowerCase();
+    // Prefer explicit DB payStatus set by webhook/confirm
+    if (o.payStatus === "paid") return "paid";
+    // Consider payment captured or provider transaction id as proof of payment
     const captured = Number((o.payment && o.payment.capturedAmount) || 0);
-    if (method.includes("zalopay") || provider.includes("zalopay") || captured > 0) return "paid";
+    const zpTransId = String((o.payment && o.payment.zpTransId) || "").trim();
+    if (captured > 0 || zpTransId) return "paid";
     return "unpaid";
   } catch (e) {
     return "unpaid";
@@ -132,7 +133,7 @@ module.exports.list = async (req, res) => {
       .skip(skip)
       .limit(limit)
       .select(
-        "orderCode totalPrice status method payStatus fullName email phone address createdAt updatedAt cart bundles"
+        "orderCode totalPrice status method payStatus fullName email phone address createdAt updatedAt cart bundles payment"
       )
       .lean();
 
@@ -144,7 +145,10 @@ module.exports.list = async (req, res) => {
     }
 
     // Ensure payStatus is present/inferred for client UI
-    const withPay = (orders || []).map((o) => ({ ...o, payStatus: o.payStatus || inferPayStatus(o) }));
+    const withPay = (orders || []).map((o) => ({
+      ...o,
+      payStatus: o.payStatus || inferPayStatus(o),
+    }));
 
     return v1.ok(res, withPay || [], {
       total,
@@ -216,7 +220,13 @@ module.exports.cancel = async (req, res) => {
         // Return conflict with latest snapshot so frontend can refresh
         await session.abortTransaction();
         const latest = await Order.findById(order._id).lean();
-        return v1.fail(res, 409, "CONFLICT", "Order cannot be cancelled in its current status", latest);
+        return v1.fail(
+          res,
+          409,
+          "CONFLICT",
+          "Order cannot be cancelled in its current status",
+          latest
+        );
       }
 
       // Idempotent: if already cancelled by same user, return success with snapshot
@@ -231,7 +241,12 @@ module.exports.cancel = async (req, res) => {
       order.cancelledBy = "customer";
       order.cancelReason = reason || "";
       order.statusHistory = order.statusHistory || [];
-      order.statusHistory.push({ status: "cancelled", changedAt: new Date(), changedBy: "customer", note: reason || "" });
+      order.statusHistory.push({
+        status: "cancelled",
+        changedAt: new Date(),
+        changedBy: "customer",
+        note: reason || "",
+      });
 
       // Idempotent restock per line
       const variantIds = [];
@@ -259,23 +274,35 @@ module.exports.cancel = async (req, res) => {
       }
 
       // If payment method is zalopay and capturedAmount > 0, enqueue refund job and set refundStatus
-      if ((order.method === "zalopay" || (order.payment && order.payment.provider === "zalopay")) && order.payment?.capturedAmount > 0) {
+      if (
+        (order.method === "zalopay" || (order.payment && order.payment.provider === "zalopay")) &&
+        order.payment?.capturedAmount > 0
+      ) {
         order.payment = order.payment || {};
         order.payment.refundStatus = "pending";
 
+        // generate an idempotency key for this refund (order-based)
+        const idempotencyKey = `${order._id.toString()}_${Date.now()}`;
         const job = new RefundJob({
           orderId: order._id,
           orderCode: order.orderCode,
           provider: "zalopay",
+          idempotencyKey,
           payload: {
             amount: order.payment.capturedAmount,
             providerChargeId: order.payment.providerChargeId || "",
+            appTransId: order.payment?.appTransId || undefined,
           },
         });
         await job.save({ session });
         // also record a refunds record stub
         order.payment.refunds = order.payment.refunds || [];
-        order.payment.refunds.push({ amount: order.payment.capturedAmount, createdAt: new Date(), status: "pending" });
+        order.payment.refunds.push({
+          amount: order.payment.capturedAmount,
+          createdAt: new Date(),
+          status: "pending",
+          idempotencyKey,
+        });
         await order.save({ session });
       }
 
