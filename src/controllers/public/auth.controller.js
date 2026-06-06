@@ -7,7 +7,7 @@ const Design = require("../../models/design.model");
 const ForgotPassword = require("../../models/forgotPassword.model");
 const mailHelper = require("../../helper/mailer.helper");
 const generateHelper = require("../../helper/generate.helper");
-const { ensureGuestIdCookie } = require("../../helper/guest.helper");
+const { ensureGuestIdCookie, rotateGuestIdCookie } = require("../../helper/guest.helper");
 
 const isValidEmail = (email) => {
   const s = String(email || "")
@@ -65,34 +65,108 @@ const clearClientTokenCookie = (req, res) => {
   });
 };
 
-const mergeGuestToUser = async ({ guestId, userId }) => {
-  // Merge cart: if user already has cart -> append guest bundles, then delete guest cart.
-  const [guestCart, userCart] = await Promise.all([
-    Cart.findOne({ guestId }).lean(),
-    Cart.findOne({ userId: String(userId) }).lean(),
+const normalizeEngravingPart = (value) => String(value || "").trim();
+
+const buildProductMergeKey = (line) => {
+  if (!line || line.isBuyNow) return null;
+  return JSON.stringify({
+    productId: String(line.productId || ""),
+    variantId: String(line.variantId || ""),
+    text: normalizeEngravingPart(line.engraving?.text),
+    fontId: normalizeEngravingPart(line.engraving?.fontId),
+    previewImage: normalizeEngravingPart(line.engraving?.previewImage),
+  });
+};
+
+const cloneProductLine = (line) => ({
+  productId: line.productId,
+  variantId: line.variantId,
+  quantity: Number(line.quantity) || 1,
+  price: Number(line.price) || 0,
+  engraving: {
+    text: normalizeEngravingPart(line.engraving?.text),
+    fontId: normalizeEngravingPart(line.engraving?.fontId),
+    fontSizePx:
+      line.engraving?.fontSizePx !== undefined ? Number(line.engraving.fontSizePx) : undefined,
+    previewImage: normalizeEngravingPart(line.engraving?.previewImage),
+  },
+  isBuyNow: line.isBuyNow === true,
+  createdAt: line.createdAt ? new Date(line.createdAt) : new Date(),
+});
+
+const mergeProductLines = (targetCart, guestCart) => {
+  const targetProducts = Array.isArray(targetCart.products) ? targetCart.products : [];
+  const guestProducts = Array.isArray(guestCart.products) ? guestCart.products : [];
+
+  const mergeIndex = new Map();
+  targetProducts.forEach((line, index) => {
+    const key = buildProductMergeKey(line);
+    if (key) mergeIndex.set(key, index);
+  });
+
+  for (const guestLine of guestProducts) {
+    const cloned = cloneProductLine(guestLine);
+    const key = buildProductMergeKey(cloned);
+    if (!key) {
+      targetProducts.push(cloned);
+      continue;
+    }
+
+    const existingIndex = mergeIndex.get(key);
+    if (existingIndex === undefined) {
+      mergeIndex.set(key, targetProducts.length);
+      targetProducts.push(cloned);
+      continue;
+    }
+
+    const existing = targetProducts[existingIndex];
+    existing.quantity = (Number(existing.quantity) || 0) + (Number(cloned.quantity) || 0);
+    existing.price = Number(cloned.price) || Number(existing.price) || 0;
+  }
+};
+
+const mergeBundleLines = (targetCart, guestCart) => {
+  const targetBundles = Array.isArray(targetCart.bundles) ? targetCart.bundles : [];
+  const guestBundles = Array.isArray(guestCart.bundles) ? guestCart.bundles : [];
+  for (const bundle of guestBundles) {
+    targetBundles.push(bundle);
+  }
+};
+
+const mergeGuestToUser = async ({ guestId, userId, session }) => {
+  const safeGuestId = String(guestId || "").trim();
+  const safeUserId = String(userId || "").trim();
+  if (!safeGuestId || !safeUserId) return;
+
+  const [guestCart, existingUserCart] = await Promise.all([
+    Cart.findOne({ guestId: safeGuestId }).session(session),
+    Cart.findOne({ userId: safeUserId }).session(session),
   ]);
 
-  if (guestCart && userCart) {
-    const guestBundles = Array.isArray(guestCart.bundles) ? guestCart.bundles : [];
-    if (guestBundles.length) {
-      await Cart.updateOne(
-        { userId: String(userId) },
-        { $push: { bundles: { $each: guestBundles } } }
-      );
+  if (guestCart) {
+    let userCart = existingUserCart;
+    if (!userCart) {
+      userCart = new Cart({ userId: safeUserId, guestId: "", products: [], bundles: [] });
     }
-    await Cart.deleteOne({ guestId });
-  } else if (guestCart && !userCart) {
-    await Cart.updateOne(
-      { guestId },
-      { $set: { userId: String(userId) }, $unset: { guestId: "" } }
-    );
+
+    mergeBundleLines(userCart, guestCart);
+    mergeProductLines(userCart, guestCart);
+    userCart.userId = safeUserId;
+    userCart.guestId = "";
+    await userCart.save({ session });
+    await Cart.deleteOne({ _id: guestCart._id }).session(session);
   }
 
-  // Attach userId to all guest designs.
   await Design.updateMany(
-    { guestId, userId: null },
-    { $set: { userId: new mongoose.Types.ObjectId(userId) } }
+    { guestId: safeGuestId, userId: null },
+    { $set: { userId: new mongoose.Types.ObjectId(safeUserId) } },
+    { session }
   );
+};
+
+const finalizeClientLogin = ({ req, res, token }) => {
+  setClientTokenCookie(req, res, token);
+  rotateGuestIdCookie(req, res);
 };
 
 module.exports.register = async (req, res) => {
@@ -168,8 +242,6 @@ module.exports.login = async (req, res) => {
       return res.status(400).json({ code: "error", message: "Mật khẩu không đúng" });
     }
 
-    await mergeGuestToUser({ guestId, userId: user._id });
-
     // Include role so the same token can be used for v1 bearer endpoints.
     const token = jwt.sign(
       { id: user._id, email: user.email, role: "client" },
@@ -178,7 +250,20 @@ module.exports.login = async (req, res) => {
         expiresIn: "1d",
       }
     );
-    setClientTokenCookie(req, res, token);
+
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+      await mergeGuestToUser({ guestId, userId: user._id, session });
+      await session.commitTransaction();
+    } catch (mergeError) {
+      await session.abortTransaction();
+      throw mergeError;
+    } finally {
+      session.endSession();
+    }
+
+    finalizeClientLogin({ req, res, token });
 
     return res.status(200).json({
       code: "success",
@@ -202,6 +287,7 @@ module.exports.me = async (req, res) => {
 
 module.exports.logout = async (req, res) => {
   clearClientTokenCookie(req, res);
+  rotateGuestIdCookie(req, res);
   return res.status(200).json({ code: "success", message: "Đăng xuất thành công" });
 };
 
@@ -382,14 +468,25 @@ module.exports.oauthGoogle = async (req, res) => {
       }
     }
 
-    await mergeGuestToUser({ guestId, userId: user._id });
-
     const token = jwt.sign(
       { id: user._id, email: user.email, role: "client" },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
-    setClientTokenCookie(req, res, token);
+
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+      await mergeGuestToUser({ guestId, userId: user._id, session });
+      await session.commitTransaction();
+    } catch (mergeError) {
+      await session.abortTransaction();
+      throw mergeError;
+    } finally {
+      session.endSession();
+    }
+
+    finalizeClientLogin({ req, res, token });
 
     return res.status(200).json({
       code: "success",
@@ -478,14 +575,25 @@ module.exports.oauthFacebook = async (req, res) => {
       }
     }
 
-    await mergeGuestToUser({ guestId, userId: user._id });
-
     const token = jwt.sign(
       { id: user._id, email: user.email, role: "client" },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
-    setClientTokenCookie(req, res, token);
+
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+      await mergeGuestToUser({ guestId, userId: user._id, session });
+      await session.commitTransaction();
+    } catch (mergeError) {
+      await session.abortTransaction();
+      throw mergeError;
+    } finally {
+      session.endSession();
+    }
+
+    finalizeClientLogin({ req, res, token });
 
     return res.status(200).json({
       code: "success",
