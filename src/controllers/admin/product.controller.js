@@ -339,7 +339,7 @@ module.exports.createProduct = async (req, res) => {
     });
 
     if (!variants.length) {
-      return res.status(400).json({ message: "Chưa có variant nào" });
+      return res.status(400).json({ message: "Hãy tạo biến thể cho sản phẩm!" });
     }
 
     const newVariants = [];
@@ -561,7 +561,7 @@ module.exports.updateProduct = async (req, res) => {
     });
 
     if (!variants.length) {
-      return res.status(400).json({ message: "Chưa có variant nào" });
+      return res.status(400).json({ message: "Hãy tạo biến thể cho sản phẩm!" });
     }
 
     const newVariants = [];
