@@ -237,6 +237,10 @@ module.exports.login = async (req, res) => {
       return res.status(400).json({ code: "error", message: "Email không tồn tại trong hệ thống!" });
     }
 
+    if (user.status === "inactive") {
+      return res.status(403).json({ code: "error", message: "Tài khoản của bạn đã bị khóa!" });
+    }
+
     const ok = await bcrypt.compare(String(password || ""), user.password || "");
     if (!ok) {
       return res.status(400).json({ code: "error", message: "Mật khẩu không đúng!" });
@@ -468,6 +472,10 @@ module.exports.oauthGoogle = async (req, res) => {
       }
     }
 
+    if (user.status === "inactive") {
+      return res.status(403).json({ code: "error", message: "Tài khoản của bạn đã bị khóa!" });
+    }
+
     const token = jwt.sign(
       { id: user._id, email: user.email, role: "client" },
       process.env.JWT_SECRET,
@@ -573,6 +581,10 @@ module.exports.oauthFacebook = async (req, res) => {
       if (Object.keys(updates).length) {
         await AccountClient.updateOne({ _id: user._id }, { $set: updates });
       }
+    }
+
+    if (user.status === "inactive") {
+      return res.status(403).json({ code: "error", message: "Tài khoản của bạn đã bị khóa!" });
     }
 
     const token = jwt.sign(

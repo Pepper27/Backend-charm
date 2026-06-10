@@ -44,6 +44,11 @@ const requireAuth = async (req, res, next) => {
           .status(401)
           .json({ success: false, error: "user_not_found", message: "Client not found" });
       }
+      if (client.status === "inactive") {
+        return res
+          .status(401)
+          .json({ success: false, error: "user_inactive", message: "Client account inactive" });
+      }
       req.auth = { id: client._id, email: client.email, role: "client" };
     } else {
       // Fallback: accept token if valid and attach basic info
@@ -103,7 +108,7 @@ const optionalAuth = async (req, res, next) => {
       }
     } else if (roleFromToken === "client") {
       const client = await AccountClient.findOne({ _id: decoded.id, deleted: false });
-      if (client) {
+      if (client && client.status !== "inactive") {
         req.auth = { id: client._id, email: client.email, role: "client" };
       }
     } else {
