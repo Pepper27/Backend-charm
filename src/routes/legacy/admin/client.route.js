@@ -3,6 +3,7 @@ const clientController = require("../../../controllers/admin/client.controller")
 
 router.get("/", clientController.getClients);
 router.get("/:id", clientController.getClientById);
+router.patch("/:id/status", clientController.updateClientStatus);
 router.delete("/:id", clientController.deleteClient);
 
 module.exports = router;

@@ -25,7 +25,7 @@ module.exports.getClients = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .select("fullName email phone createdAt")
+      .select("fullName email phone createdAt status")
       .lean();
 
     return res.status(200).json({
@@ -50,13 +50,48 @@ module.exports.getClientById = async (req, res) => {
     }
 
     const client = await AccountClient.findOne({ _id: id, deleted: false })
-      .select("fullName email phone createdAt")
+      .select("fullName email phone createdAt status")
       .lean();
     if (!client) {
       return res.status(404).json({ message: "Không tìm thấy tài khoản khách hàng" });
     }
 
     return res.status(200).json({ data: client });
+  } catch (error) {
+    return res.status(500).json({ message: "Lỗi server", error: error.message });
+  }
+};
+
+module.exports.updateClientStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const nextStatus = String(req.body?.status || "").trim().toLowerCase();
+
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Id không hợp lệ" });
+    }
+
+    if (!["active", "inactive"].includes(nextStatus)) {
+      return res.status(400).json({ message: "Trạng thái tài khoản không hợp lệ" });
+    }
+
+    const updated = await AccountClient.findOneAndUpdate(
+      { _id: id, deleted: false },
+      { $set: { status: nextStatus } },
+      { new: true, projection: { fullName: 1, email: 1, phone: 1, createdAt: 1, status: 1 } }
+    ).lean();
+
+    if (!updated) {
+      return res.status(404).json({ message: "Không tìm thấy tài khoản khách hàng" });
+    }
+
+    return res.status(200).json({
+      message:
+        nextStatus === "inactive"
+          ? "Khóa tài khoản khách hàng thành công"
+          : "Mở khóa tài khoản khách hàng thành công",
+      data: updated,
+    });
   } catch (error) {
     return res.status(500).json({ message: "Lỗi server", error: error.message });
   }

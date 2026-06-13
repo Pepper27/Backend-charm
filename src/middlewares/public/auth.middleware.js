@@ -25,7 +25,7 @@ module.exports.attachClient = async (req, res, next) => {
     const client = await AccountClient.findOne({ _id: decoded.id, deleted: false })
       .lean()
       .maxTimeMS(5000);
-    req.client = client || null;
+    req.client = client && client.status !== "inactive" ? client : null;
     return next();
   } catch {
     req.client = null;

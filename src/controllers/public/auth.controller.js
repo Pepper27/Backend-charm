@@ -182,7 +182,7 @@ module.exports.register = async (req, res) => {
       return res.status(400).json({ code: "error", message: "Họ và tên không hợp lệ" });
     }
     if (!isValidEmail(safeEmail)) {
-      return res.status(400).json({ code: "error", message: "Email không hợp lệ" });
+      return res.status(400).json({ code: "error", message: "Email không đúng định dạng!" });
     }
     if (!safePhone) {
       return res.status(400).json({ code: "error", message: "Số điện thoại là bắt buộc" });
@@ -234,12 +234,16 @@ module.exports.login = async (req, res) => {
 
     const user = await AccountClient.findOne({ email: safeEmail, deleted: false });
     if (!user) {
-      return res.status(400).json({ code: "error", message: "Email không tồn tại" });
+      return res.status(400).json({ code: "error", message: "Email không tồn tại trong hệ thống!" });
+    }
+
+    if (user.status === "inactive") {
+      return res.status(403).json({ code: "error", message: "Tài khoản của bạn đã bị khóa!" });
     }
 
     const ok = await bcrypt.compare(String(password || ""), user.password || "");
     if (!ok) {
-      return res.status(400).json({ code: "error", message: "Mật khẩu không đúng" });
+      return res.status(400).json({ code: "error", message: "Mật khẩu không đúng!" });
     }
 
     // Include role so the same token can be used for v1 bearer endpoints.
@@ -299,12 +303,12 @@ module.exports.forgotPassword = async (req, res) => {
       .toLowerCase();
 
     if (!isValidEmail(safeEmail)) {
-      return res.status(400).json({ code: "error", message: "Email không hợp lệ" });
+      return res.status(400).json({ code: "error", message: "Email không đúng định dạng!" });
     }
 
     const user = await AccountClient.findOne({ email: safeEmail, deleted: false }).lean();
     if (!user) {
-      return res.status(400).json({ code: "error", message: "Email không tồn tại" });
+      return res.status(400).json({ code: "error", message: "Email không tồn tại trong hệ thống!" });
     }
 
     const now = new Date();
@@ -355,7 +359,7 @@ module.exports.resetPassword = async (req, res) => {
     const safeOtp = String(otp || "").trim();
 
     if (!isValidEmail(safeEmail)) {
-      return res.status(400).json({ code: "error", message: "Email không hợp lệ" });
+      return res.status(400).json({ code: "error", message: "Email không đúng định dạng!" });
     }
     if (!safeOtp) {
       return res.status(400).json({ code: "error", message: "OTP là bắt buộc" });
@@ -371,7 +375,7 @@ module.exports.resetPassword = async (req, res) => {
       expireAt: { $gt: new Date() },
     });
     if (!record) {
-      return res.status(400).json({ code: "error", message: "OTP không đúng hoặc đã hết hạn" });
+      return res.status(400).json({ code: "error", message: "OTP không đúng hoặc đã hết hạn!" });
     }
 
     const salt = bcrypt.genSaltSync(10);
@@ -466,6 +470,10 @@ module.exports.oauthGoogle = async (req, res) => {
       if (Object.keys(updates).length) {
         await AccountClient.updateOne({ _id: user._id }, { $set: updates });
       }
+    }
+
+    if (user.status === "inactive") {
+      return res.status(403).json({ code: "error", message: "Tài khoản của bạn đã bị khóa!" });
     }
 
     const token = jwt.sign(
@@ -573,6 +581,10 @@ module.exports.oauthFacebook = async (req, res) => {
       if (Object.keys(updates).length) {
         await AccountClient.updateOne({ _id: user._id }, { $set: updates });
       }
+    }
+
+    if (user.status === "inactive") {
+      return res.status(403).json({ code: "error", message: "Tài khoản của bạn đã bị khóa!" });
     }
 
     const token = jwt.sign(
