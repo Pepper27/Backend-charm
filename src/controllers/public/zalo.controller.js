@@ -207,7 +207,6 @@ module.exports.confirm = async (req, res) => {
     if (!cfg.appId || !cfg.key1)
       return res.status(500).json({ message: "ZaloPay credentials not configured" });
 
-    // Determine which appTransId to query: prefer provided, else fetch from order via orderCode
     let resolvedAppTransId = appTransId;
     if (!resolvedAppTransId) {
       if (!orderCode) return res.status(400).json({ message: "Missing appTransId or orderCode" });
@@ -218,7 +217,6 @@ module.exports.confirm = async (req, res) => {
 
     if (!resolvedAppTransId) return res.status(400).json({ message: "Missing appTransId" });
 
-    // Build query MAC: app_id|app_trans_id|key1
     const macData = [cfg.appId, resolvedAppTransId, cfg.key1].join("|");
     const mac = crypto.createHmac("sha256", cfg.key1).update(macData).digest("hex");
 
@@ -235,23 +233,21 @@ module.exports.confirm = async (req, res) => {
     });
     const data = await resp.json().catch(() => null);
     if (!resp.ok || !data) return res.status(500).json({ message: "ZaloPay query failed" });
-
-    // data.return_code === 1 means success. sub_return_message may include details
-    if (data.return_code !== 1) {
-      return res.status(200).json({ message: "Not paid", data });
-    }
-
-    // Mark order paid and cleanup
-    // app_trans_id may contain orderCode suffix
-    const orderQuery = { "payment.appTransId": resolvedAppTransId };
-    let order = await Order.findOne(orderQuery);
+    let order = await Order.findOne({ "payment.appTransId": resolvedAppTransId });
     if (!order && orderCode) order = await Order.findOne({ orderCode });
     if (!order) return res.status(404).json({ message: "Order not found" });
+    if (data.return_code !== 1) {
+      return res.status(200).json({ 
+        success: false, 
+        message: data.return_message || "Giao dịch không thành công hoặc đã bị hủy.", 
+        isZaloCanceled: true,
+        data: order 
+      });
+    }
 
     if (order.payStatus !== "paid") {
       const amount = safeNum(data.amount || 0);
       const zpTransId = data.zp_trans_id || data.zp_trans_token || "";
-      //await Order.updateOne({ _id: order._id }, { $set: { payStatus: "paid", "payment.provider": "zalopay", "payment.capturedAmount": amount, "payment.zpTransId": zpTransId } });
       await Order.updateOne(
         { _id: order._id },
         {
@@ -272,12 +268,11 @@ module.exports.confirm = async (req, res) => {
           },
         }
       );
-      // cleanup cart
       await pullCartByOrderSnapshot(order);
     }
 
     const updated = await Order.findOne({ _id: order._id }).lean();
-    return res.status(200).json({ message: "OK", data: updated });
+    return res.status(200).json({ success: true, message: "OK", data: updated });
   } catch (err) {
     console.error("Zalo confirm error:", err);
     return res.status(500).json({ message: "Internal error" });
