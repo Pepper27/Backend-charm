@@ -121,7 +121,7 @@ const schema = new mongoose.Schema(
         note: String,
       },
     ],
-    // Payment related details (refundStatus and refund history kept here)
+    // Payment related details for external providers like ZaloPay.
     payment: {
       capturedAmount: { type: Number, default: 0 },
       providerChargeId: { type: String, default: "" },
@@ -133,19 +133,6 @@ const schema = new mongoose.Schema(
       // Expiration time for pending external payments (e.g. Zalopay). Auto-cancel job uses this.
       expiresAt: { type: Date },
       zpTransId: { type: String, default: "" },
-      refundStatus: {
-        type: String,
-        enum: ["none", "pending", "processing", "succeeded", "failed", "manual_review"],
-        default: "none",
-      },
-      refunds: [
-        {
-          amount: Number,
-          createdAt: Date,
-          status: String,
-          providerResponse: mongoose.Schema.Types.Mixed,
-        },
-      ],
     },
     updatedBy: String,
     deletedBy: String,

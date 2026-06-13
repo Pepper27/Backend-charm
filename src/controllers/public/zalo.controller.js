@@ -98,11 +98,8 @@ module.exports.webhook = async (req, res) => {
     console.log("ORDER FOUND:", order);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    // If already paid, return OK (idempotent) unless this callback contains refund info
-    const providerRefundId =
-      data.refund_id || data.refund_trans_id || data.zp_refund_id || data.refundId || null;
     const eventType = String(data.type || "").toLowerCase();
-    if (order.payStatus === "paid" && !providerRefundId && !eventType.includes("refund"))
+    if (order.payStatus === "paid")
       return res.status(200).json({ message: "Already paid" });
 
     const amount = safeNum(data.amount || data.total || 0);
@@ -156,39 +153,6 @@ module.exports.webhook = async (req, res) => {
     console.log("KẾT QUẢ UPDATE DB:", result); // Dòng này cực kỳ quan trọng để check
     // Cleanup cart according to snapshot
     await pullCartByOrderSnapshot(order);
-
-    // If this webhook contains refund info, try to reconcile refund entry in order.payment.refunds
-    try {
-      if (providerRefundId || eventType.includes("refund")) {
-        const fresh = await Order.findById(order._id).lean();
-        const pendingRefunds = Array.isArray(fresh.payment?.refunds) ? fresh.payment.refunds : [];
-        let matchedIndex = -1;
-        if (providerRefundId) {
-          matchedIndex = pendingRefunds.findIndex(
-            (r) => String(r.providerRefundId || "") === String(providerRefundId)
-          );
-        }
-        if (matchedIndex === -1) {
-          matchedIndex = pendingRefunds.findIndex(
-            (r) => r.status === "pending" && Number(r.amount || 0) === Number(amount || 0)
-          );
-        }
-        if (matchedIndex !== -1) {
-          const key = `payment.refunds.${matchedIndex}`;
-          const update = {};
-          update[`${key}.status`] = "succeeded";
-          update[`${key}.providerResponse`] = data;
-          if (providerRefundId) update[`${key}.providerRefundId`] = providerRefundId;
-          await Order.updateOne({ _id: order._id }, { $set: update });
-          await Order.updateOne(
-            { _id: order._id },
-            { $set: { "payment.refundStatus": "succeeded" } }
-          );
-        }
-      }
-    } catch (e) {
-      console.error("Error updating refund from webhook:", e);
-    }
 
     return res.status(200).json({ message: "OK" });
   } catch (err) {

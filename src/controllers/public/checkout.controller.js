@@ -404,8 +404,6 @@ module.exports.checkoutBundles = async (req, res) => {
               provider: "zalopay",
               capturedAmount: 0,
               providerChargeId: "",
-              refundStatus: "none",
-              refunds: [],
             }
           : undefined,
       cart: allLines.map((it) => ({
