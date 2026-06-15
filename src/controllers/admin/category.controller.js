@@ -72,10 +72,12 @@ module.exports.getCategories = async (req, res) => {
       find.slug = { $regex: slugKeyword, $options: "i" };
     }
     if (categoryId) {
+
       // include items whose parent is the given category (and optionally the category itself)
       find.$or = [
         // { _id: categoryId }, // enable if you want to include the category by id as well
         { parent: categoryId },
+
       ];
     }
     if (startDate || endDate) {

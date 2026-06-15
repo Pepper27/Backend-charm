@@ -44,6 +44,7 @@ router.get("/", authMiddleware.verifyToken, async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: "Lỗi server" });
   }
+
 });
 
 router.get("/:id", authMiddleware.verifyToken, async (req, res) => {

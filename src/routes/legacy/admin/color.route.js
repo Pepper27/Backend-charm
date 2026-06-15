@@ -4,6 +4,7 @@ const Color = require("../../../models/color.model");
 const AccountAdmin = require("../../../models/accountAdmin.model");
 const moment = require("moment");
 router.get("/", authMiddleware.verifyToken, async (req, res) => {
+
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = req.query.limit ? Math.max(1, parseInt(req.query.limit)) : null;
@@ -44,6 +45,7 @@ router.get("/", authMiddleware.verifyToken, async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: "Lỗi server" });
   }
+
 });
 
 router.get("/:id", authMiddleware.verifyToken, async (req, res) => {
