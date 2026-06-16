@@ -287,17 +287,17 @@ module.exports.exportOrders = async (req, res) => {
     const worksheet = workbook.addWorksheet("Danh sách Đơn hàng");
 
     worksheet.columns = [
-      { header: "Mã Đơn Hàng", key: "orderCode", width: 20 },
-      { header: "Khách Hàng", key: "customerName", width: 25 },
+      { header: "Mã Đơn Hàng", key: "orderCode", width: 30 },
+      { header: "Khách Hàng", key: "customerName", width: 15 },
       { header: "Email", key: "email", width: 25 },
       { header: "Số Điện Thoại", key: "phone", width: 15 },
       { header: "Địa Chỉ giao hàng", key: "address", width: 35 },
-      { header: "Số Lượng SP", key: "itemsCount", width: 12 },
-      { header: "Tổng Tiền", key: "totalPrice", width: 18 },
+      { header: "Số Lượng", key: "itemsCount", width: 10 },
+      { header: "Tổng Tiền", key: "totalPrice", width: 12 },
       { header: "Trạng Thái đơn", key: "status", width: 18 },
       { header: "Trạng Thái Thanh Toán", key: "payStatus", width: 18 },
-      { header: "Phương Thức Thanh Toán", key: "method", width: 15 },
-      { header: "Ngày Đặt", key: "createdAt", width: 22 },
+      { header: "Phương Thức Thanh Toán", key: "method", width: 12 },
+      { header: "Ngày Đặt", key: "createdAt", width: 20 },
     ];
 
     const STATUS_MAP = { pending: "Chờ xác nhận", confirmed: "Đang chuẩn bị", shipping: "Đang giao", delivered: "Đã giao", cancelled: "Đã hủy" };
