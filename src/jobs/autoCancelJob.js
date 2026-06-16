@@ -2,7 +2,6 @@ const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const { connectDB } = require("../config/database");
 const Order = require("../models/order.model");
-const RefundJob = require("../models/refundJob.model");
 const Product = require("../models/product.model");
 
 dotenv.config();
@@ -123,36 +122,6 @@ async function runOnce() {
           { $inc: { "variants.$.quantity": v.quantity } },
           { session }
         );
-      }
-
-      // enqueue refund job if needed
-      if (
-        (order.method === "zalopay" || (order.payment && order.payment.provider === "zalopay")) &&
-        order.payment?.capturedAmount > 0
-      ) {
-        order.payment = order.payment || {};
-        order.payment.refundStatus = "pending";
-        const idempotencyKey = `${order._id.toString()}_${Date.now()}`;
-        const job = new RefundJob({
-          orderId: order._id,
-          orderCode: order.orderCode,
-          provider: "zalopay",
-          idempotencyKey,
-          payload: {
-            amount: order.payment.capturedAmount,
-            providerChargeId: order.payment.providerChargeId || "",
-            appTransId: order.payment?.appTransId || undefined,
-          },
-        });
-        await job.save({ session });
-        order.payment.refunds = order.payment.refunds || [];
-        order.payment.refunds.push({
-          amount: order.payment.capturedAmount,
-          createdAt: new Date(),
-          status: "pending",
-          idempotencyKey,
-        });
-        await order.save({ session });
       }
 
       await session.commitTransaction();

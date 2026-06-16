@@ -1,7 +1,6 @@
 const Order = require("../../../models/order.model");
 const v1 = require("../../../helper/v1-response.helper");
 const mongoose = require("mongoose");
-const RefundJob = require("../../../models/refundJob.model");
 const Product = require("../../../models/product.model");
 
 const normalizeStatus = (value) => String(value || "").trim();
@@ -204,7 +203,7 @@ module.exports.cancel = async (req, res) => {
 
     const reason = String(req.body.reason || "").trim();
 
-    // Start a transaction to update order and create refund job atomically.
+    // Start a transaction to update order atomically.
     const session = await mongoose.startSession();
     try {
       session.startTransaction();
@@ -213,6 +212,23 @@ module.exports.cancel = async (req, res) => {
       if (!order) {
         await session.abortTransaction();
         return v1.fail(res, 404, "NOT_FOUND", "Order not found");
+      }
+
+      const isPaidZaloPay =
+        (String(order.method || "").trim().toLowerCase() === "zalopay" ||
+          String(order?.payment?.provider || "").trim().toLowerCase() === "zalopay") &&
+        inferPayStatus(order) === "paid";
+
+      if (isPaidZaloPay) {
+        await session.abortTransaction();
+        const latest = await Order.findById(order._id).lean();
+        return v1.fail(
+          res,
+          409,
+          "CONFLICT",
+          "ZaloPay paid orders cannot be cancelled",
+          latest
+        );
       }
 
       // Allowed cancel statuses for customer
@@ -271,39 +287,6 @@ module.exports.cancel = async (req, res) => {
             { session }
           );
         }
-      }
-
-      // If payment method is zalopay and capturedAmount > 0, enqueue refund job and set refundStatus
-      if (
-        (order.method === "zalopay" || (order.payment && order.payment.provider === "zalopay")) &&
-        order.payment?.capturedAmount > 0
-      ) {
-        order.payment = order.payment || {};
-        order.payment.refundStatus = "pending";
-
-        // generate an idempotency key for this refund (order-based)
-        const idempotencyKey = `${order._id.toString()}_${Date.now()}`;
-        const job = new RefundJob({
-          orderId: order._id,
-          orderCode: order.orderCode,
-          provider: "zalopay",
-          idempotencyKey,
-          payload: {
-            amount: order.payment.capturedAmount,
-            providerChargeId: order.payment.providerChargeId || "",
-            appTransId: order.payment?.appTransId || undefined,
-          },
-        });
-        await job.save({ session });
-        // also record a refunds record stub
-        order.payment.refunds = order.payment.refunds || [];
-        order.payment.refunds.push({
-          amount: order.payment.capturedAmount,
-          createdAt: new Date(),
-          status: "pending",
-          idempotencyKey,
-        });
-        await order.save({ session });
       }
 
       await session.commitTransaction();
