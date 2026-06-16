@@ -10,6 +10,7 @@ const checkoutController = require("../../../controllers/public/checkout.control
 const zaloController = require("../../../controllers/public/zalo.controller");
 const engravingController = require("../../../controllers/public/engraving.controller");
 const wishlistRouter = require("./wishlist.route");
+const chatbotRouter = require("./chatbot.route");
 
 // Attach client identity when token is present.
 router.use(publicAuthMiddleware.attachClient);
@@ -54,6 +55,9 @@ router.delete("/designs/:designId", designController.deleteDesign);
 
 // Wishlist (requires client login)
 router.use("/wishlist", wishlistRouter);
+
+// AI shopping assistant
+router.use("/chatbot", chatbotRouter);
 
 // Client auth
 router.post("/auth/register", authController.register);
