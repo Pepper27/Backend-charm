@@ -276,12 +276,10 @@ const getTimeBounds = (filterType, startQuery, endQuery) => {
 
 module.exports.getDashboard = async (req, res) => {
   try {
-    const { filterType, startDate: sQ, endDate: eQ } = req.query;
+    const { filterType, startDate: sQ, endDate: eQ, productSearch } = req.query;
     const { startDate, endDate } = getTimeBounds(filterType, sQ, eQ);
-
     const thresholdAlmostOver = 5; 
 
-    // Các query tổng số lượng giữ nguyên không đổi theo thời gian
     const [
       totalClient,
       totalProductAgg,
@@ -300,14 +298,28 @@ module.exports.getDashboard = async (req, res) => {
       Product.find({}).select({ name: 1, variants: 1 }).lean(),
     ]);
 
-    // Các query CẦN LỌC THEO THỜI GIAN
+    let orderMatchQuery = { 
+      deleted: false, 
+      createdAt: { $gte: startDate, $lte: endDate } 
+    };
+
+    if (productSearch && productSearch.trim() !== "") {
+      const matchedProducts = await Product.find({
+        name: { $regex: productSearch.trim(), $options: "i" },
+        deleted: false
+      }).select({ _id: 1 }).lean();
+
+      const matchedProductIds = matchedProducts.map(p => String(p._id));
+    
+      orderMatchQuery["cart.productId"] = { $in: matchedProductIds };
+    }
     const [orderCount, revenueAgg, orderNewRaw, topOrdersRaw] = await Promise.all([
-      Order.countDocuments({ deleted: false, createdAt: { $gte: startDate, $lte: endDate } }),
+      Order.countDocuments(orderMatchQuery),
       Order.aggregate([
-        { $match: { deleted: false, status: "delivered", createdAt: { $gte: startDate, $lte: endDate } } },
+        { $match: { ...orderMatchQuery, status: "delivered" } },
         { $group: { _id: null, sum: { $sum: "$totalPrice" } } },
       ]),
-      Order.find({ deleted: false, createdAt: { $gte: startDate, $lte: endDate } })
+      Order.find(orderMatchQuery)
         .sort({ createdAt: -1 })
         .limit(10)
         .populate("userId", "fullName")

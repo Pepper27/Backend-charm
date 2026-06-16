@@ -2,6 +2,7 @@ const Order = require("../../models/order.model");
 const Product = require("../../models/product.model");
 const mongoose = require("mongoose");
 const slugify = require("slugify");
+const ExcelJS = require("exceljs");
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const inferPayStatus = (o) => {
@@ -224,5 +225,138 @@ module.exports.updateOrder = async (req, res) => {
       message: "Lỗi khi cập nhật đơn hàng",
       error: error.message,
     });
+  }
+};
+
+module.exports.exportOrders = async (req, res) => {
+  try {
+    const keyword = String(req.query.keyword || "").trim();
+    const status = String(req.query.status || "").trim();
+    const method = String(req.query.method || "").trim();
+    const payStatus = String(req.query.payStatus || "").trim();
+    const startDate = String(req.query.startDate || "").trim();
+    const endDate = String(req.query.endDate || "").trim();
+
+    const find = { deleted: false };
+
+    if (status) find.status = status;
+    if (method) find.method = method;
+    const payFind = buildPayStatusFind(payStatus);
+    if (payFind) Object.assign(find, payFind);
+
+    if (startDate || endDate) {
+      const createdAtFilter = {};
+      if (startDate) {
+        const start = new Date(startDate);
+        if (!isNaN(start.getTime())) {
+          start.setHours(0, 0, 0, 0);
+          createdAtFilter.$gte = start;
+        }
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        if (!isNaN(end.getTime())) {
+          end.setHours(23, 59, 59, 999);
+          createdAtFilter.$lte = end;
+        }
+      }
+      if (createdAtFilter.$gte && createdAtFilter.$lte && createdAtFilter.$gte > createdAtFilter.$lte) {
+        return res.status(400).json({ message: "startDate không được lớn hơn endDate" });
+      }
+      find.createdAt = createdAtFilter;
+    }
+
+    if (keyword) {
+      const rx = new RegExp(escapeRegex(keyword), "i");
+      const keywordSlug = slugify(keyword, { lower: true, strict: true, locale: "vi" });
+      const sl = new RegExp(keywordSlug.replace(/-/g, ".*"), "i"); 
+      find.$or = [
+        { orderCode: rx },
+        { phone: rx },
+        { email: rx },
+        { slug: sl },
+        { address: rx },
+      ];
+    }
+    const orders = await Order.find(find)
+      .sort({ createdAt: -1 })
+      .populate({ path: "userId", select: "fullName email phone" })
+      .lean();
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Danh sách Đơn hàng");
+
+    worksheet.columns = [
+      { header: "Mã Đơn Hàng", key: "orderCode", width: 20 },
+      { header: "Khách Hàng", key: "customerName", width: 25 },
+      { header: "Email", key: "email", width: 25 },
+      { header: "Số Điện Thoại", key: "phone", width: 15 },
+      { header: "Địa Chỉ giao hàng", key: "address", width: 35 },
+      { header: "Số Lượng SP", key: "itemsCount", width: 12 },
+      { header: "Tổng Tiền", key: "totalPrice", width: 18 },
+      { header: "Trạng Thái đơn", key: "status", width: 18 },
+      { header: "Trạng Thái Thanh Toán", key: "payStatus", width: 18 },
+      { header: "Phương Thức Thanh Toán", key: "method", width: 15 },
+      { header: "Ngày Đặt", key: "createdAt", width: 22 },
+    ];
+
+    const STATUS_MAP = { pending: "Chờ xác nhận", confirmed: "Đang chuẩn bị", shipping: "Đang giao", delivered: "Đã giao", cancelled: "Đã hủy" };
+    const METHOD_MAP = { cash: "Tiền mặt", zalopay: "ZaloPay" };
+    const PAY_MAP = { unpaid: "Chưa thanh toán", paid: "Đã thanh toán" };
+
+    orders.forEach((o) => {
+      const itemsCount = (o.cart || []).reduce((sum, item) => sum + (Number(item?.quantity) || 0), 0);
+      const inferredPay = inferPayStatus(o);
+
+      worksheet.addRow({
+        orderCode: o.orderCode || o._id.toString(),
+        customerName: o?.userId?.fullName || o?.fullName || "Chưa có",
+        email: o?.userId?.email || o?.email || "",
+        phone: o?.userId?.phone || o?.phone || "",
+        address: o.address || "",
+        itemsCount: itemsCount,
+        totalPrice: Number(o.totalPrice) || 0,
+        status: STATUS_MAP[o.status] || o.status,
+        payStatus: PAY_MAP[inferredPay] || inferredPay,
+        method: METHOD_MAP[o.method] || o.method,
+        createdAt: o.createdAt ? new Date(o.createdAt).toLocaleString("vi-VN") : "",
+      });
+    });
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.height = 25;
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFF" }, size: 11 };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "4F81BD" } }; 
+      cell.alignment = { vertical: "middle", horizontal: "center" };
+    });
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.height = 20;
+        row.getCell("totalPrice").numberFormat = '#,##0"₫"';
+        row.getCell("totalPrice").alignment = { horizontal: "right" };
+        row.getCell("itemsCount").alignment = { horizontal: "center" };
+        row.getCell("orderCode").alignment = { horizontal: "center" };
+        row.getCell("phone").alignment = { horizontal: "center" };
+        
+        row.eachCell((cell) => {
+          cell.border = {
+            top: { style: "thin", color: { argb: "E0E0E0" } },
+            left: { style: "thin", color: { argb: "E0E0E0" } },
+            bottom: { style: "thin", color: { argb: "E0E0E0" } },
+            right: { style: "thin", color: { argb: "E0E0E0" } },
+          };
+        });
+      }
+    });
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=Danh_sach_don_hang_${Date.now()}.xlsx`);
+
+    await workbook.xlsx.write(res);
+    return res.end();
+
+  } catch (error) {
+    console.error("Export excel error: ", error);
+    return res.status(500).json({ message: "Lỗi khi xuất file excel", error: error.message });
   }
 };
