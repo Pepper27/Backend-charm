@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Product = require("../../models/product.model");
 const Category = require("../../models/category.model");
 const Collection = require("../../models/collection.model");
+const Order = require("../../models/order.model");
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL = "gemini-2.0-flash";
@@ -44,6 +45,47 @@ const PRICE_PATTERNS = [
   { regex: /dưới\s*(\d+[\d.,]*)\s*(triệu|tr|k|nghìn|ngan)?/i, type: "max" },
   { regex: /từ\s*(\d+[\d.,]*)\s*(triệu|tr|k|nghìn|ngan)?\s*(?:đến|-|toi)?\s*(\d+[\d.,]*)?\s*(triệu|tr|k|nghìn|ngan)?/i, type: "range" },
 ];
+
+const ORDER_CODE_PATTERN = /\b(ORD[A-Z0-9]{8,})\b/i;
+
+const isGlobalChatScope = (context) =>
+  Boolean(
+    context?.ignorePageRestriction === true ||
+      context?.catalogScope === "global" ||
+      context?.scope === "global",
+  );
+
+const orderStatusLabelVI = (status) => {
+  const value = String(status || "");
+  if (value === "pending") return "Chờ xác nhận";
+  if (value === "confirmed") return "Chờ lấy hàng";
+  if (value === "shipping") return "Đang giao";
+  if (value === "delivered") return "Đã giao";
+  if (value === "cancelled") return "Đã huỷ";
+  return value || "đang xử lý";
+};
+
+const paymentMethodLabelVI = (method) => {
+  const value = String(method || "").toLowerCase();
+  if (value === "zalopay") return "ZaloPay";
+  if (value === "cash") return "COD (thanh toán khi nhận hàng)";
+  return value || "chưa rõ";
+};
+
+const extractOrderCode = (message) => {
+  const match = String(message || "").match(ORDER_CODE_PATTERN);
+  return match ? String(match[1]).trim().toUpperCase() : "";
+};
+
+const extractEmail = (message) => {
+  const match = String(message || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match ? String(match[0]).trim().toLowerCase() : "";
+};
+
+const extractPhone = (message) => {
+  const match = String(message || "").match(/\b(0\d{9,10})\b/);
+  return match ? String(match[1]).trim() : "";
+};
 
 const asText = (value, max = 300) => {
   const text = String(value || "")
@@ -191,6 +233,16 @@ const formatPrice = (min, max) => {
   return `${Math.max(safeMin, safeMax).toLocaleString("vi-VN")}đ`;
 };
 
+const inferCompareStyleHint = (product) => {
+  const hay = slugifyLite(`${product?.name || ""} ${product?.description || ""}`);
+  if (/trai tim|heart/.test(hay)) return "phong cách lãng mạn, hợp làm quà tặng";
+  if (/nut thac|vo cuc|infinity/.test(hay)) return "ý nghĩa vĩnh cửu, tối giản và thanh lịch";
+  if (/rong|dragon/.test(hay)) return "điểm nhấn mạnh mẽ, cá tính";
+  if (/murano/.test(hay) && /hong|pink/.test(hay)) return "điểm nhấn màu sắc Murano nhẹ nhàng";
+  if (/murano/.test(hay)) return "vẻ Murano tinh tế, dễ phối charm";
+  return inferStyleHint(product);
+};
+
 const inferStyleHint = (product) => {
   const hay = slugifyLite(`${product?.name || ""} ${product?.description || ""}`);
   if (/crown|royal|vương miện/.test(hay)) return "vẻ sang và cổ điển hơn";
@@ -208,7 +260,7 @@ const isBraceletLike = (product, context) => {
 
 const chooseBestSizeProduct = ({ catalog, context }) => {
   if (catalog?.products?.length) return catalog.products[0];
-  if (context?.product) {
+  if (!isGlobalChatScope(context) && context?.product) {
     return {
       id: context.product.id,
       slug: context.product.slug,
@@ -355,22 +407,172 @@ const summarizeListing = (listing) => {
   };
 };
 
+const summarizeCatalogContext = (catalogContext) => {
+  if (!catalogContext || typeof catalogContext !== "object") return null;
+  return {
+    scope: asText(catalogContext.scope, 40),
+    totalProducts: Math.max(0, Number(catalogContext.totalProducts) || 0),
+    categories: asArray(catalogContext.categories)
+      .slice(0, 20)
+      .map((item) => ({
+        id: String(item?.id || item?._id || "").trim(),
+        slug: asText(item?.slug, 80),
+        name: asText(item?.name, 120),
+      }))
+      .filter((item) => item.name),
+    matchedProducts: asArray(catalogContext.matchedProducts)
+      .slice(0, 8)
+      .map((item) => ({
+        id: String(item?.id || item?._id || "").trim(),
+        slug: asText(item?.slug, 120),
+        name: asText(item?.name, 160),
+        categoryName: asText(item?.categoryName, 120),
+        priceText: asText(item?.priceText, 80),
+        materials: asArray(item?.materials).map((material) => asText(material, 60)).filter(Boolean),
+      }))
+      .filter((item) => item.name),
+  };
+};
+
+const catalogCardFromContextItem = (item) => ({
+  id: String(item?.id || "").trim(),
+  slug: asText(item?.slug, 120),
+  name: asText(item?.name, 180),
+  image: "",
+  priceText: asText(item?.priceText, 80),
+  materialText: asArray(item?.materials).join(", "),
+  categoryName: asText(item?.categoryName, 120),
+  collections: [],
+  description: "",
+  totalSold: 0,
+});
+
+const mergeCatalogProducts = (catalog, context) => {
+  const frontendProducts = asArray(context?.catalogContext?.matchedProducts).map(catalogCardFromContextItem);
+  const backendProducts = asArray(catalog?.products);
+  const products = uniqueBy([...frontendProducts, ...backendProducts], (item) => item.id || item.slug || item.name).slice(
+    0,
+    MAX_SEARCH_RESULTS,
+  );
+  return {
+    ...(catalog || {}),
+    products,
+  };
+};
+
+const summarizeOrderFromDb = (order) => {
+  if (!order) return null;
+  const items = [];
+  for (const line of asArray(order.cart).slice(0, 8)) {
+    items.push({
+      name: asText(line?.name, 120),
+      quantity: Math.max(1, Number(line?.quantity) || 1),
+      priceText: formatPrice(line?.price, line?.price),
+    });
+  }
+  for (const bundle of asArray(order.bundles).slice(0, 4)) {
+    items.push({
+      name: asText(bundle?.name || "Thiết kế mix charm", 120),
+      quantity: Math.max(1, Number(bundle?.quantity) || 1),
+      priceText: formatPrice(bundle?.priceSnapshot?.total, bundle?.priceSnapshot?.total),
+    });
+  }
+  return {
+    orderCode: asText(order.orderCode, 40),
+    status: orderStatusLabelVI(order.status),
+    paymentStatus: order.payStatus === "paid" ? "Đã thanh toán" : "Chưa thanh toán",
+    method: paymentMethodLabelVI(order.method),
+    totalText: formatPrice(order.totalPrice, order.totalPrice),
+    canCancel: ["pending", "confirmed"].includes(String(order.status || "")),
+    items,
+    notFound: false,
+  };
+};
+
+const lookupOrderForChat = async ({ message, context }) => {
+  if (!isGlobalChatScope(context) && context?.order?.orderCode) {
+    return context.order;
+  }
+
+  const orderCode = extractOrderCode(message);
+  if (orderCode) {
+    const order = await Order.findOne({ orderCode, deleted: false })
+      .select("orderCode status method payStatus totalPrice cart bundles createdAt")
+      .lean();
+    if (!order) return { orderCode, notFound: true };
+    return summarizeOrderFromDb(order);
+  }
+
+  const email = extractEmail(message);
+  const phone = extractPhone(message);
+  if (!email && !phone) return null;
+
+  const find = { deleted: false };
+  if (email && phone) find.$or = [{ email }, { phone }];
+  else if (email) find.email = email;
+  else find.phone = phone;
+
+  const orders = await Order.find(find)
+    .sort({ createdAt: -1 })
+    .select("orderCode status method payStatus totalPrice cart bundles createdAt")
+    .limit(3)
+    .lean();
+
+  if (!orders.length) {
+    return { lookupKey: email || phone, notFound: true };
+  }
+  if (orders.length === 1) return summarizeOrderFromDb(orders[0]);
+
+  return {
+    multiple: true,
+    lookupKey: email || phone,
+    orders: orders.map((order) => summarizeOrderFromDb(order)),
+  };
+};
+
 const normalizeContext = (context) => {
   const safe = context && typeof context === "object" ? context : {};
-  return {
-    pageType: asText(safe.pageType, 40),
+  const activePage =
+    safe.activePageContext && typeof safe.activePageContext === "object" ? safe.activePageContext : safe;
+  const globalScope = isGlobalChatScope(safe);
+  const base = {
+    scope: globalScope ? "global" : asText(safe.scope || safe.catalogScope, 40),
+    ignorePageRestriction: globalScope || Boolean(safe.ignorePageRestriction),
+    catalogScope: asText(safe.catalogScope, 40),
+    catalogContext: summarizeCatalogContext(safe.catalogContext),
+    pageType: asText(safe.pageType || activePage.pageType, 40),
     route: {
       pathname: asText(safe.route?.pathname, 120),
       search: asText(safe.route?.search, 300),
     },
-    product: summarizeProduct(safe.product),
-    cart: summarizeCart(safe.cart),
-    order: summarizeOrder(safe.order),
-    design: summarizeDesign(safe.design),
-    listing: summarizeListing(safe.listing),
+    user: {
+      firstName: asText(safe.user?.firstName || activePage.user?.firstName, 40),
+      isLoggedIn: Boolean(safe.user?.isLoggedIn || activePage.user?.isLoggedIn),
+    },
+  };
+
+  if (globalScope) {
+    return {
+      ...base,
+      product: null,
+      cart: null,
+      order: null,
+      design: null,
+      listing: null,
+      wishlist: { count: 0, items: [] },
+    };
+  }
+
+  return {
+    ...base,
+    product: summarizeProduct(activePage.product || safe.product),
+    cart: summarizeCart(activePage.cart || safe.cart),
+    order: summarizeOrder(activePage.order || safe.order),
+    design: summarizeDesign(activePage.design || safe.design),
+    listing: summarizeListing(activePage.listing || safe.listing),
     wishlist: {
-      count: Math.max(0, Number(safe.wishlist?.count) || 0),
-      items: asArray(safe.wishlist?.items)
+      count: Math.max(0, Number(activePage.wishlist?.count || safe.wishlist?.count) || 0),
+      items: asArray(activePage.wishlist?.items || safe.wishlist?.items)
         .slice(0, 6)
         .map((item) => ({
           id: String(item?.id || item?._id || "").trim(),
@@ -380,36 +582,34 @@ const normalizeContext = (context) => {
         }))
         .filter((item) => item.name),
     },
-    user: {
-      firstName: asText(safe.user?.firstName, 40),
-      isLoggedIn: Boolean(safe.user?.isLoggedIn),
-    },
   };
 };
 
 const detectIntent = ({ message, context }) => {
   const text = slugifyLite(message);
+  const globalScope = isGlobalChatScope(context);
   const hasBestSellerKeyword = /ban chay|bestseller|best seller|pho bien|noi bat nhat|hot nhat/.test(text);
   const hasPriceKeyword = /duoi \d|tren \d|tu \d|tam gia|ngan sach|gia bao nhieu|bao nhieu tien|re hon/.test(text);
-  const hasDesignKeyword = /mix charm|phoi charm|phoi voi charm|mix voi charm|slot|clip zone|thiet ke/.test(text);
+  const hasDesignKeyword = /mix charm|phoi charm|phoi voi charm|mix voi charm|slot|clip zone|thiet ke|goi y charm/.test(text);
   const hasSearchKeyword = /mua|tim|goi y|tu van|co mau nao|xem them|vong tay|nhan|day chuyen|bong tai|mau charm|charm nao/.test(text);
+  const hasOrderKeyword = /don hang|order|ma don|trang thai don|huy don|tra cuu don/.test(text) || Boolean(extractOrderCode(message));
 
   if (hasBestSellerKeyword) {
     return INTENT.BESTSELLER;
   }
-  if (/so sanh|khac nhau|chon mau nao|mau nao hop/.test(text) && /\sva\s|\svoi\s/.test(text)) {
+  if (/so sanh|khac nhau|chon mau nao|mau nao hop/.test(text)) {
     return INTENT.COMPARE;
   }
-  if (/don hang|order|ma don|trang thai don|huy don/.test(text) || context.order?.orderCode) {
+  if (hasOrderKeyword || (!globalScope && context.order?.orderCode)) {
     return INTENT.ORDER;
   }
-  if (/zalopay|thanh toan|chuyen khoan|cod|tra gop/.test(text)) {
+  if (/zalopay|thanh toan|chuyen khoan|cod|tra gop|huong dan thanh toan/.test(text)) {
     return INTENT.PAYMENT;
   }
   if (/size|kich co|do tay|do ngon|chu vi/.test(text)) {
     return INTENT.SIZE;
   }
-  if (hasDesignKeyword || (context.design && !hasPriceKeyword && !hasSearchKeyword)) {
+  if (hasDesignKeyword || (!globalScope && context.design && !hasPriceKeyword && !hasSearchKeyword && !hasOrderKeyword)) {
     return INTENT.DESIGN;
   }
   if (/bao hanh|chinh sach|doi tra|van chuyen|giao hang|khac chu|khac ten/.test(text)) {
@@ -418,7 +618,7 @@ const detectIntent = ({ message, context }) => {
   if (hasSearchKeyword || hasPriceKeyword || /charm/.test(text)) {
     return INTENT.SEARCH;
   }
-  if (context.product) return INTENT.ADVICE;
+  if (!globalScope && context.product) return INTENT.ADVICE;
   return INTENT.GENERAL;
 };
 
@@ -458,20 +658,337 @@ const parseProductRequest = (message, context) => {
   };
 };
 
-const parseCompareNames = (message) => {
-  const raw = String(message || "").trim();
-  const normalized = raw.replace(/so sánh giúp t|so sánh giúp tôi|so sánh|compare/gi, "").trim();
-  const separators = [" và ", " voi ", " với ", " vs ", " so với "];
-  for (const sep of separators) {
-    const idx = normalized.toLowerCase().indexOf(sep.trim().toLowerCase());
-    if (idx > 0) {
-      const left = normalized.slice(0, idx).replace(/[:,-]+$/g, "").trim();
-      const right = normalized.slice(idx + sep.length).replace(/^[:,-]+/g, "").trim();
-      if (left && right) return [left, right];
+const cleanCompareName = (name) =>
+  asText(
+    String(name || "")
+      .replace(/\s*[,.]?\s*(so sánh|compare)(\s+giúp(\s+tôi|\s+t)?|\s+2\s+sản\s*phẩm.*)?.*$/gi, "")
+      .replace(/\s*\d+\s*sản\s*phẩm\s*này.*$/gi, "")
+      .replace(/\s*(giúp(\s+tôi|\s+t)?|nha|nhé|nhe|ạ|a)\s*$/gi, "")
+      .replace(/\s*[,.]\s*$/g, "")
+      .trim(),
+    180,
+  );
+
+const stripCompareIntro = (raw) => {
+  const text = String(raw || "").trim();
+  const colonIdx = text.search(/[:：]/);
+  if (colonIdx >= 0) {
+    const before = slugifyLite(text.slice(0, colonIdx));
+    if (/so sanh|compare|san pham|giup toi|giup t/.test(before)) {
+      return text.slice(colonIdx + 1).trim();
     }
   }
+
+  return text
+    .replace(/^\s*so sánh(?:\s+\d+\s*sản phẩm này)?(?:\s+giúp(?:\s+tôi|\s+t))?[:：]?\s*/i, "")
+    .replace(/^\s*compare(?:\s+\d+\s*products?)?[:：]?\s*/i, "")
+    .trim();
+};
+
+const COMPARE_TOKEN_STOPWORDS = new Set([
+  "san",
+  "pham",
+  "nay",
+  "giup",
+  "toi",
+  "cho",
+  "va",
+  "voi",
+  "the",
+  "and",
+  "so",
+  "sanh",
+  "compare",
+  "nao",
+  "nhe",
+  "nha",
+]);
+
+const getCompareTokens = (name) => {
+  const cleaned = cleanCompareName(stripCompareIntro(name));
+  return uniqueBy(
+    slugifyLite(cleaned)
+      .split(" ")
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 2 && !COMPARE_TOKEN_STOPWORDS.has(token)),
+    (token) => token,
+  );
+};
+
+const GENERIC_COMPARE_TOKENS = new Set([
+  "charm",
+  "pandora",
+  "moments",
+  "vang",
+  "hong",
+  "bac",
+  "silver",
+  "ma",
+  "14k",
+  "k",
+  "dinh",
+  "da",
+  "o",
+  "giua",
+  "ua",
+]);
+
+const getDistinctiveCompareTokens = (name) =>
+  getCompareTokens(name)
+    .filter((token) => !GENERIC_COMPARE_TOKENS.has(token))
+    .sort((left, right) => right.length - left.length);
+
+const getComparePhrases = (name) => {
+  const tokens = getCompareTokens(name);
+  const phrases = [];
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    phrases.push(`${tokens[index]} ${tokens[index + 1]}`);
+    if (index < tokens.length - 2) {
+      phrases.push(`${tokens[index]} ${tokens[index + 1]} ${tokens[index + 2]}`);
+    }
+  }
+  return uniqueBy(
+    phrases
+      .map((phrase) => phrase.trim())
+      .filter((phrase) => {
+        const parts = phrase.split(" ");
+        return parts.some((part) => !GENERIC_COMPARE_TOKENS.has(part) && part.length >= 3);
+      }),
+    (phrase) => phrase,
+  ).sort((left, right) => right.length - left.length);
+};
+
+const scoreProductNameMatch = (queryName, productName) => {
+  const query = slugifyLite(cleanCompareName(stripCompareIntro(queryName)));
+  const product = slugifyLite(productName);
+  if (!query || !product) return 0;
+  if (query === product) return 100;
+  if (product.includes(query)) return 98;
+  if (query.includes(product)) return 92;
+
+  const tokens = getCompareTokens(queryName);
+  if (!tokens.length) return 0;
+
+  let matchedWeight = 0;
+  let missedWeight = 0;
+  let totalWeight = 0;
+  for (const token of tokens) {
+    const weight = GENERIC_COMPARE_TOKENS.has(token)
+      ? 1
+      : token.length >= 6
+        ? 5
+        : token.length >= 5
+          ? 4
+          : token.length === 4
+            ? 3
+            : 2;
+    totalWeight += weight;
+    if (product.includes(token)) matchedWeight += weight;
+    else if (!GENERIC_COMPARE_TOKENS.has(token) && token.length >= 3) missedWeight += weight;
+  }
+
+  let score = totalWeight > 0 ? Math.round((matchedWeight / totalWeight) * 100) : 0;
+  score = Math.max(0, score - Math.round(missedWeight * 1.35));
+
+  const phrases = getComparePhrases(queryName);
+  let phraseHits = 0;
+  for (const phrase of phrases.slice(0, 4)) {
+    if (product.includes(phrase)) {
+      phraseHits += 1;
+      score += phrase.length >= 12 ? 14 : 10;
+    }
+  }
+
+  const productTokens = getCompareTokens(productName).filter((token) => !GENERIC_COMPARE_TOKENS.has(token) && token.length >= 4);
+  const queryTokenSet = new Set(tokens);
+  let alienPenalty = 0;
+  for (const token of productTokens) {
+    if (!queryTokenSet.has(token)) alienPenalty += token.length >= 5 ? 8 : 5;
+  }
+  score = Math.max(0, score - alienPenalty);
+
+  if (phraseHits === 0 && getDistinctiveCompareTokens(queryName).length >= 2) {
+    score = Math.max(0, score - 20);
+  }
+
+  return Math.min(100, score);
+};
+
+const MIN_COMPARE_MATCH_SCORE = 52;
+const EXPLICIT_COMPARE_MIN_SCORE = 74;
+
+const hasStrongComparePhraseMatch = (queryName, productName) => {
+  const phrases = getComparePhrases(queryName);
+  const product = slugifyLite(productName);
+  return phrases.slice(0, 3).some((phrase) => phrase.length >= 7 && product.includes(phrase));
+};
+
+const fetchCompareCandidates = async (name) => {
+  const cleaned = cleanCompareName(stripCompareIntro(name));
+  const distinctive = getDistinctiveCompareTokens(cleaned);
+  const tokens = getCompareTokens(cleaned).sort((left, right) => right.length - left.length);
+  if (!tokens.length) return [];
+
+  const charmDocs = await loadCharmProductsForCompare();
+  const charmRanked = rankProductCandidates(cleaned, charmDocs, EXPLICIT_COMPARE_MIN_SCORE);
+  if (charmRanked.length) return charmRanked.map((entry) => entry.product);
+
+  if (distinctive.length >= 2) {
+    const andDocs = await Product.find({
+      deleted: false,
+      $and: distinctive.slice(0, Math.min(3, distinctive.length)).map((token) => ({
+        name: { $regex: escapeRegex(token), $options: "i" },
+      })),
+    })
+      .populate("category", "name slug")
+      .populate("collections", "name slug")
+      .select("name slug description options variants priceMin priceMax category collections engraving")
+      .limit(16)
+      .lean();
+    const andRanked = rankProductCandidates(cleaned, andDocs, EXPLICIT_COMPARE_MIN_SCORE);
+    if (andRanked.length) return andRanked.map((entry) => entry.product);
+  }
+
+  if (distinctive[0]) {
+    const primaryDocs = await Product.find({
+      deleted: false,
+      name: { $regex: escapeRegex(distinctive[0]), $options: "i" },
+    })
+      .populate("category", "name slug")
+      .populate("collections", "name slug")
+      .select("name slug description options variants priceMin priceMax category collections engraving")
+      .limit(24)
+      .lean();
+    const primaryRanked = rankProductCandidates(cleaned, primaryDocs, EXPLICIT_COMPARE_MIN_SCORE);
+    if (primaryRanked.length) return primaryRanked.map((entry) => entry.product);
+  }
+
+  const fetchTokens = uniqueBy(
+    [...distinctive, ...tokens.filter((token) => token.length >= 4)].slice(0, 6),
+    (token) => token,
+  );
+
+  const or = fetchTokens.map((token) => ({
+    name: { $regex: escapeRegex(token), $options: "i" },
+  }));
+
+  const docs = await Product.find({ deleted: false, $or: or })
+    .populate("category", "name slug")
+    .populate("collections", "name slug")
+    .select("name slug description options variants priceMin priceMax category collections engraving")
+    .limit(48)
+    .lean();
+
+  const ranked = rankProductCandidates(cleaned, docs, EXPLICIT_COMPARE_MIN_SCORE);
+  if (ranked.length) return ranked.map((entry) => entry.product);
+
   return [];
 };
+
+const findProductForCompareName = async (name, excludeIds = []) => {
+  const cleaned = cleanCompareName(stripCompareIntro(name));
+  if (!cleaned) return null;
+
+  const exact = await findProductByName(cleaned, {});
+  if (exact && !excludeIds.map(String).includes(String(exact.id))) {
+    const exactScore = scoreProductNameMatch(cleaned, exact.name);
+    if (
+      exactScore >= EXPLICIT_COMPARE_MIN_SCORE &&
+      (hasStrongComparePhraseMatch(cleaned, exact.name) || exactScore >= 88)
+    ) {
+      return exact;
+    }
+  }
+
+  const candidates = await fetchCompareCandidates(cleaned);
+  const exclude = new Set(excludeIds.map((id) => String(id)));
+  const ranked = candidates
+    .filter((product) => !exclude.has(String(product?._id || product?.id || "")))
+    .map((product) => ({
+      product,
+      score: scoreProductNameMatch(cleaned, product?.name || ""),
+    }))
+    .filter(
+      (entry) =>
+        entry.score >= EXPLICIT_COMPARE_MIN_SCORE &&
+        (hasStrongComparePhraseMatch(cleaned, entry.product?.name || "") || entry.score >= 88),
+    )
+    .sort((left, right) => right.score - left.score);
+
+  return ranked[0] ? toProductCard(ranked[0].product) : null;
+};
+
+const loadCharmProductsForCompare = async () => {
+  const charmCategories = await Category.find({
+    deleted: false,
+    $or: [{ slug: /charm/i }, { name: /charm/i }],
+  })
+    .select("_id")
+    .lean();
+  const charmCategoryIds = charmCategories.map((item) => item._id).filter(Boolean);
+  if (!charmCategoryIds.length) return [];
+
+  return Product.find({ deleted: false, category: { $in: charmCategoryIds } })
+    .populate("category", "name slug")
+    .populate("collections", "name slug")
+    .select("name slug description options variants priceMin priceMax category collections engraving")
+    .limit(260)
+    .lean();
+};
+
+const findProductByNameFuzzy = async (name, context) => {
+  const cleaned = cleanCompareName(stripCompareIntro(name));
+  if (!cleaned) return null;
+
+  const exact = await findProductByName(cleaned, context);
+  if (exact) return exact;
+
+  const candidates = await fetchCompareCandidates(cleaned);
+  if (candidates[0]) return toProductCard(candidates[0]);
+
+  return null;
+};
+
+const parseCompareNames = (message) => {
+  const payload = stripCompareIntro(String(message || "").trim());
+  const separators = [" và ", " voi ", " với ", " vs ", " so với "];
+
+  for (const sep of separators) {
+    const idx = payload.toLowerCase().indexOf(sep.trim().toLowerCase());
+    if (idx > 0) {
+      const left = cleanCompareName(payload.slice(0, idx));
+      const right = cleanCompareName(payload.slice(idx + sep.length));
+      if (left.length >= 3 && right.length >= 3) return [left, right];
+    }
+  }
+
+  const withoutCompareClause = payload
+    .replace(/\s*[,.]?\s*so sánh.*$/i, "")
+    .replace(/\s*compare.*$/i, "")
+    .trim();
+
+  for (const sep of separators) {
+    const idx = withoutCompareClause.toLowerCase().indexOf(sep.trim().toLowerCase());
+    if (idx > 0) {
+      const left = cleanCompareName(withoutCompareClause.slice(0, idx));
+      const right = cleanCompareName(withoutCompareClause.slice(idx + sep.length));
+      if (left.length >= 3 && right.length >= 3) return [left, right];
+    }
+  }
+
+  return [];
+};
+
+const extractProductSearchTokens = (name) => getCompareTokens(name);
+
+const rankProductCandidates = (needle, products, minScore = MIN_COMPARE_MATCH_SCORE) =>
+  uniqueBy(products || [], (item) => String(item?._id || item?.id || ""))
+    .map((product) => ({
+      product,
+      score: scoreProductNameMatch(needle, product?.name || ""),
+    }))
+    .filter((entry) => entry.score >= minScore)
+    .sort((left, right) => right.score - left.score);
 
 const buildVisibleProductMap = (context) => {
   const visible = asArray(context.listing?.visibleProducts);
@@ -597,14 +1114,17 @@ const searchCatalogProducts = async ({ message, context }) => {
 };
 
 const findProductByName = async (name, context) => {
+  const cleaned = cleanCompareName(stripCompareIntro(name));
+  if (!cleaned) return null;
+
   const visible = buildVisibleProductMap(context);
   const visibleBest = visible
-    .map((item) => ({ ...item, score: scoreNameSimilarity(name, item.name) }))
+    .map((item) => ({ ...item, score: scoreProductNameMatch(cleaned, item.name) }))
     .sort((a, b) => b.score - a.score)[0];
 
   const or = [
-    { name: { $regex: escapeRegex(name), $options: "i" } },
-    { slug: { $regex: escapeRegex(slugifyLite(name).replace(/\s+/g, "-")), $options: "i" } },
+    { name: { $regex: escapeRegex(cleaned), $options: "i" } },
+    { slug: { $regex: escapeRegex(slugifyLite(cleaned).replace(/\s+/g, "-")), $options: "i" } },
   ];
 
   const docs = await Product.find({ deleted: false, $or: or })
@@ -614,12 +1134,10 @@ const findProductByName = async (name, context) => {
     .limit(8)
     .lean();
 
-  const best = docs
-    .map((product) => ({ product, score: scoreNameSimilarity(name, product?.name || "") }))
-    .sort((a, b) => b.score - a.score)[0];
+  const best = rankProductCandidates(cleaned, docs)[0];
 
-  if (best?.score >= 20) return toProductCard(best.product);
-  if (visibleBest?.score >= 20 && visibleBest?.slug) {
+  if (best?.score >= MIN_COMPARE_MATCH_SCORE) return toProductCard(best.product);
+  if (visibleBest?.score >= MIN_COMPARE_MATCH_SCORE && visibleBest?.slug) {
     const fallback = await Product.findOne({ deleted: false, slug: visibleBest.slug })
       .populate("category", "name slug")
       .populate("collections", "name slug")
@@ -673,7 +1191,7 @@ const searchReferencedProduct = async (message) => {
 };
 
 const resolveConversationProduct = async ({ message, history, context }) => {
-  if (context.product?.name) {
+  if (!isGlobalChatScope(context) && context?.product?.name) {
     return {
       id: context.product.id,
       slug: context.product.slug,
@@ -687,23 +1205,43 @@ const resolveConversationProduct = async ({ message, history, context }) => {
 
   const candidates = [message, ...history.map((item) => item.content)].filter(Boolean);
   for (const candidate of candidates) {
-    const fromVisible = await findBestVisibleProduct(candidate, context);
-    if (fromVisible) return fromVisible;
+    if (!isGlobalChatScope(context)) {
+      const fromVisible = await findBestVisibleProduct(candidate, context);
+      if (fromVisible) return fromVisible;
+    }
     const fromSearch = await searchReferencedProduct(candidate);
     if (fromSearch) return fromSearch;
   }
   return null;
 };
 
-const buildComparison = async ({ message, context }) => {
+const buildComparison = async ({ message, context, catalog }) => {
   const names = parseCompareNames(message);
-  if (names.length < 2) return { names: [], products: [] };
-  const products = [];
-  for (const name of names.slice(0, 2)) {
-    const product = await findProductByName(name, context);
-    if (product) products.push(product);
+  if (names.length >= 2) {
+    const products = [];
+    const usedIds = [];
+    for (const name of names.slice(0, 2)) {
+      const product = await findProductForCompareName(name, usedIds);
+      if (!product?.id) continue;
+      const matchScore = scoreProductNameMatch(name, product.name);
+      if (matchScore < EXPLICIT_COMPARE_MIN_SCORE) continue;
+      usedIds.push(product.id);
+      products.push(product);
+    }
+    return { names, products: uniqueBy(products, (item) => item.id) };
   }
-  return { names, products: uniqueBy(products, (item) => item.id) };
+
+  const pool = uniqueBy(
+    [...asArray(catalog?.products), ...asArray(context?.catalogContext?.matchedProducts).map(catalogCardFromContextItem)],
+    (item) => item.id || item.slug || item.name,
+  );
+
+  if (pool.length >= 2) {
+    return { names: [], products: pool.slice(0, 2) };
+  }
+
+  const fallback = await searchCatalogProducts({ message, context });
+  return { names: [], products: fallback.products.slice(0, 2) };
 };
 
 const searchCharmProducts = async ({ message, context }) => {
@@ -715,7 +1253,11 @@ const searchCharmProducts = async ({ message, context }) => {
     .lean();
 
   const charmCategoryIds = charmCategories.map((item) => item._id).filter(Boolean);
-  const braceletName = context.__resolvedProduct?.name || context.product?.name || "";
+  const braceletName =
+    context.__resolvedProduct?.name ||
+    (!isGlobalChatScope(context) ? context.product?.name : "") ||
+    (!isGlobalChatScope(context) ? context.design?.braceletName : "") ||
+    "";
   const materialHints = parseProductRequest(message, context).materialHints;
   const and = [{ deleted: false }];
 
@@ -810,11 +1352,18 @@ const buildUserPrompt = ({ message, context, intent, catalog, comparison, policy
     .map((item, index) => `${index + 1}. ${item.name} | ${item.priceText || "liên hệ"} | điểm nổi bật: ${inferStyleHint(item)}`)
     .join("\n") || "Không có dữ liệu so sánh đặc biệt.";
 
+  const orderContext = context.__resolvedOrder
+    ? JSON.stringify(context.__resolvedOrder, null, 2)
+    : "Chưa tra cứu được đơn hàng cụ thể từ tin nhắn.";
+
   return `Câu hỏi khách hàng: ${message}
 Intent nội bộ: ${intent}
 
 Ngữ cảnh website:
 ${serializeContextForPrompt(context)}
+
+Dữ liệu đơn hàng đã tra cứu:
+${orderContext}
 
 Kết quả search catalog nội bộ:
 ${catalogLines}
@@ -826,8 +1375,11 @@ Gợi ý chính sách nội bộ:
 ${policyHints.join("\n") || "Không có ghi chú chính sách đặc biệt."}
 
 Yêu cầu trả lời:
+- Khách có thể hỏi từ bất kỳ trang nào; đừng bắt họ phải đang ở trang sản phẩm, giỏ hàng hay chi tiết đơn.
 - Nếu intent là product_search hoặc product_advice: gợi ý thẳng các mẫu phù hợp nhất từ catalog, đừng nói chung chung.
 - Nếu intent là product_compare: so sánh 2 mẫu bằng bullet hoặc các câu ngắn, sau đó kết luận nên chọn mẫu nào cho nhu cầu nào.
+- Nếu intent là order_support: ưu tiên dữ liệu đơn đã tra cứu trong ngữ cảnh, không đòi khách phải mở đúng trang đơn hàng.
+- Nếu intent là payment_support: hướng dẫn rõ COD và ZaloPay, kèm các bước checkout.
 - Nếu khách nói mua vòng tay bạc hoặc tìm sản phẩm, ưu tiên lọc theo chất liệu và category khách nói.
 - Nếu catalog có sản phẩm phù hợp, đừng nói là thiếu ngữ cảnh.
 - Trả lời tự nhiên, bán hàng khéo, không dài dòng.`;
@@ -899,7 +1451,11 @@ const buildDeterministicAnswer = ({ intent, catalog, comparison, context, policy
 
   if (intent === INTENT.DESIGN && catalog.products.length) {
     const top = catalog.products.slice(0, 4);
-    const braceletName = context.__resolvedProduct?.name || context.product?.name || context.design?.braceletName || "mẫu vòng này";
+    const braceletName =
+      context.__resolvedProduct?.name ||
+      (!isGlobalChatScope(context) ? context.product?.name : "") ||
+      (!isGlobalChatScope(context) ? context.design?.braceletName : "") ||
+      "mẫu vòng bạn đang quan tâm";
     return {
       answer: [
         `${braceletName} sẽ hợp khi mix theo hướng nhẹ nhàng và đồng bộ chất liệu.`,
@@ -914,19 +1470,30 @@ const buildDeterministicAnswer = ({ intent, catalog, comparison, context, policy
 
   if (intent === INTENT.COMPARE && comparison.products.length >= 2) {
     const [a, b] = comparison.products;
+    const priceA = Number(String(a.priceText || "").replace(/[^\d]/g, ""));
+    const priceB = Number(String(b.priceText || "").replace(/[^\d]/g, ""));
+    const priceGap = priceA > 0 && priceB > 0 ? Math.abs(priceA - priceB) : 0;
+    const cheaper =
+      priceA > 0 && priceB > 0 && priceA !== priceB ? (priceA < priceB ? a : b) : null;
     const answer = [
-      `Mình so sánh nhanh cho bạn nhé:`,
+      "Mình so sánh 2 mẫu bạn chọn nhé:",
+      "",
       `1. ${a.name}`,
       `${a.priceText ? `- Giá: ${a.priceText}` : "- Giá: liên hệ"}`,
       `${a.materialText ? `- Chất liệu: ${a.materialText}` : ""}`,
-      `- Hợp nếu bạn thích ${inferStyleHint(a)}.`,
-      ``,
+      `- Phong cách: ${inferCompareStyleHint(a)}`,
+      "",
       `2. ${b.name}`,
       `${b.priceText ? `- Giá: ${b.priceText}` : "- Giá: liên hệ"}`,
       `${b.materialText ? `- Chất liệu: ${b.materialText}` : ""}`,
-      `- Hợp nếu bạn muốn ${inferStyleHint(b)}.`,
-      ``,
-      `Nếu bạn muốn, mình có thể gợi ý tiếp mẫu nào hợp hơn theo ngân sách hoặc kiểu charm bạn định phối.`,
+      `- Phong cách: ${inferCompareStyleHint(b)}`,
+      "",
+      "Kết luận:",
+      priceGap > 0
+        ? `- Về giá: chênh lệch khoảng ${priceGap.toLocaleString("vi-VN")}đ${cheaper ? `, ${cheaper.name} đang nhẹ hơn.` : "."}`
+        : "- Về giá: hai mẫu đang ở hai mức giá khác nhau, bạn cân nhắc theo ngân sách.",
+      `- ${a.name} hợp hơn nếu bạn thích ${inferCompareStyleHint(a)}.`,
+      `- ${b.name} hợp hơn nếu bạn muốn ${inferCompareStyleHint(b)}.`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -935,6 +1502,26 @@ const buildDeterministicAnswer = ({ intent, catalog, comparison, context, policy
       suggestions: [a.name, b.name].slice(0, 2),
       quickReplies: ["Mẫu nào dễ phối charm hơn?", "Mẫu nào hợp làm quà tặng?", "Lọc thêm mẫu tương tự"],
     };
+  }
+
+  if (intent === INTENT.COMPARE) {
+    const requestedNames = asArray(comparison?.names).filter(Boolean);
+    const foundNames = asArray(comparison?.products).map((item) => item.name);
+    if (foundNames.length === 1 && requestedNames.length >= 2) {
+      const missing = requestedNames.find((name) => scoreProductNameMatch(name, foundNames[0]) < 50) || requestedNames[1];
+      return {
+        answer: `Mình tìm được "${foundNames[0]}" nhưng chưa khớp chính xác mẫu "${missing}". Bạn kiểm tra lại tên mẫu thứ hai hoặc gửi link sản phẩm để mình so sánh sát hơn.`,
+        suggestions: foundNames,
+        quickReplies: ["Thử lại tên mẫu thứ hai", "Gợi ý charm tương tự", "So sánh mẫu khác"],
+      };
+    }
+    if (requestedNames.length >= 2) {
+      return {
+        answer: `Mình chưa khớp đủ 2 mẫu bạn nêu (${requestedNames.join(" và ")}). Bạn có thể gửi lại tên chính xác như trên website hoặc dán link 2 sản phẩm để mình so sánh chi tiết hơn.`,
+        suggestions: requestedNames.slice(0, 2),
+        quickReplies: ["Gửi lại tên 2 mẫu", "Gợi ý charm Murano", "Gợi ý charm Pandora"],
+      };
+    }
   }
 
   if ((intent === INTENT.SEARCH || intent === INTENT.ADVICE) && catalog.products.length) {
@@ -958,11 +1545,52 @@ const buildDeterministicAnswer = ({ intent, catalog, comparison, context, policy
     };
   }
 
-  if (intent === INTENT.ORDER && context.order?.orderCode) {
+  if (intent === INTENT.ORDER) {
+    const order = context.__resolvedOrder;
+    if (order?.multiple && asArray(order.orders).length) {
+      const lines = order.orders.map(
+        (item, index) =>
+          `${index + 1}. ${item.orderCode} - ${item.status}${item.totalText ? ` - ${item.totalText}` : ""}${item.paymentStatus ? ` (${item.paymentStatus})` : ""}`,
+      );
+      return {
+        answer: `Mình tìm thấy ${order.orders.length} đơn gần nhất liên quan đến ${order.lookupKey}:\n${lines.join("\n")}\nBạn có thể gửi mã đơn cụ thể để mình giải thích chi tiết hơn.`,
+        suggestions: order.orders.map((item) => item.orderCode).slice(0, 3),
+        quickReplies: ["Giải thích trạng thái đơn", "Đơn này có hủy được không?", "Hướng dẫn thanh toán"],
+      };
+    }
+    if (order?.notFound) {
+      const key = order.orderCode || order.lookupKey || "thông tin bạn cung cấp";
+      return {
+        answer: `Mình chưa tìm thấy đơn hàng nào khớp với ${key}. Bạn kiểm tra lại mã đơn (vd: ORD...), email hoặc số điện thoại đã dùng khi đặt hàng nhé.`,
+        suggestions: [],
+        quickReplies: ["Hướng dẫn tra cứu đơn", "Hướng dẫn thanh toán", "Liên hệ hỗ trợ"],
+      };
+    }
+    if (order?.orderCode) {
+      return {
+        answer: `Đơn ${order.orderCode} hiện đang ở trạng thái ${order.status || "đang xử lý"}${order.paymentStatus ? `, thanh toán: ${order.paymentStatus}` : ""}${order.method ? `, phương thức: ${order.method}` : ""}${order.totalText ? `, tổng tiền: ${order.totalText}` : ""}. ${order.canCancel ? "Đơn này vẫn có thể hủy nếu bạn cần." : "Nếu bạn muốn, mình có thể giải thích tiếp bước tiếp theo của đơn này."}`,
+        suggestions: [order.status, order.paymentStatus].filter(Boolean),
+        quickReplies: ["Đơn này có hủy được không?", "Giải thích trạng thái đơn", "Hướng dẫn thanh toán lại"],
+      };
+    }
     return {
-      answer: `Đơn ${context.order.orderCode} hiện đang ở trạng thái ${context.order.status || "đang xử lý"}${context.order.paymentStatus ? `, thanh toán: ${context.order.paymentStatus}` : ""}. ${context.order.canCancel ? "Đơn này vẫn có thể hủy nếu bạn cần." : "Nếu bạn muốn mình có thể giải thích tiếp bước tiếp theo của đơn này."}`,
-      suggestions: [context.order.status, context.order.paymentStatus].filter(Boolean),
-      quickReplies: ["Đơn này có hủy được không?", "Giải thích trạng thái đơn", "Hướng dẫn thanh toán lại"],
+      answer:
+        "Bạn có thể tra cứu đơn bằng mã đơn (vd: ORD...), email hoặc số điện thoại đã dùng khi mua. Nếu chưa có mã, vào mục Đơn hàng trên website và nhập email/số điện thoại để xem danh sách đơn.",
+      suggestions: [],
+      quickReplies: ["Hướng dẫn tra cứu đơn", "Hướng dẫn thanh toán", "Đơn chưa thanh toán xử lý sao?"],
+    };
+  }
+
+  if (intent === INTENT.PAYMENT) {
+    return {
+      answer: [
+        "Kim Bảo hiện hỗ trợ các cách thanh toán sau:",
+        "1. COD (thanh toán khi nhận hàng): chọn phương thức tiền mặt khi checkout, kiểm tra địa chỉ và số điện thoại trước khi đặt.",
+        "2. ZaloPay: thanh toán online ngay sau khi đặt đơn, phù hợp nếu bạn muốn xác nhận nhanh.",
+        "Các bước chung: thêm sản phẩm vào giỏ → vào Thanh toán → chọn địa chỉ → chọn phương thức → xác nhận đơn.",
+      ].join("\n"),
+      suggestions: ["COD", "ZaloPay"],
+      quickReplies: ["COD khác gì ZaloPay?", "Thanh toán lại đơn cũ", "Đơn chưa thanh toán xử lý sao?"],
     };
   }
 
@@ -1076,10 +1704,12 @@ const getCollectionSuggestions = async (context) => {
 };
 
 const findRecommendations = async ({ intent, message, context, catalog, comparison }) => {
-  if (intent === INTENT.COMPARE && comparison.products.length) return comparison.products.slice(0, MAX_RECOMMENDATIONS);
+  if (intent === INTENT.COMPARE && comparison.products.length) {
+    return comparison.products.slice(0, 2);
+  }
   if (catalog.products.length) return catalog.products.slice(0, MAX_RECOMMENDATIONS);
   if (intent === INTENT.SEARCH || intent === INTENT.BESTSELLER) return [];
-  if (context.product?.categoryId) {
+  if (!isGlobalChatScope(context) && context.product?.categoryId) {
     const rows = await Product.find({ deleted: false, category: context.product.categoryId, _id: { $ne: context.product.id || undefined } })
       .populate("category", "name slug")
       .populate("collections", "name slug")
@@ -1129,31 +1759,68 @@ module.exports.sendMessage = async (req, res) => {
     const context = normalizeContext(req.body?.context);
     context.__messageRaw = message;
     context.__resolvedProduct = await resolveConversationProduct({ message, history, context });
+    context.__resolvedOrder = await lookupOrderForChat({ message, context });
     const intent = detectIntent({ message, context });
-    const [catalog, comparison] = await Promise.all([
-      [INTENT.BESTSELLER, INTENT.SEARCH, INTENT.ADVICE, INTENT.SIZE, INTENT.GENERAL].includes(intent)
-        ? searchCatalogProducts({ message, context })
-        : intent === INTENT.DESIGN
-          ? searchCharmProducts({ message, context })
-        : Promise.resolve({ request: parseProductRequest(message, context), products: [] }),
-      intent === INTENT.COMPARE ? buildComparison({ message, context }) : Promise.resolve({ names: [], products: [] }),
-    ]);
+
+    const needsCatalogSearch = [
+      INTENT.BESTSELLER,
+      INTENT.SEARCH,
+      INTENT.ADVICE,
+      INTENT.SIZE,
+      INTENT.GENERAL,
+      INTENT.COMPARE,
+    ].includes(intent);
+
+    let catalog = needsCatalogSearch
+      ? await searchCatalogProducts({ message, context })
+      : intent === INTENT.DESIGN
+        ? await searchCharmProducts({ message, context })
+        : { request: parseProductRequest(message, context), products: [] };
+    catalog = mergeCatalogProducts(catalog, context);
+
+    const comparison =
+      intent === INTENT.COMPARE ? await buildComparison({ message, context, catalog }) : { names: [], products: [] };
+    if (intent === INTENT.COMPARE && comparison.products.length >= 2) {
+      const requestedNames = asArray(comparison.names).filter(Boolean);
+      const pairsValid =
+        requestedNames.length < 2 ||
+        requestedNames.every((name) => {
+          const best = comparison.products
+            .map((product) => ({
+              product,
+              score: scoreProductNameMatch(name, product.name),
+            }))
+            .sort((left, right) => right.score - left.score)[0];
+          return (
+            best &&
+            best.score >= EXPLICIT_COMPARE_MIN_SCORE &&
+            (hasStrongComparePhraseMatch(name, best.product.name) || best.score >= 88)
+          );
+        });
+      if (pairsValid) {
+        context.__comparisonReady = true;
+      }
+    }
     const policyHints = buildPolicyHints(message);
     const recommendedProducts = await findRecommendations({ intent, message, context, catalog, comparison });
 
     let result;
     try {
-      result = await requestGemini({
-        apiKey,
-        model,
-        message,
-        history,
-        context,
-        intent,
-        catalog,
-        comparison,
-        policyHints,
-      });
+      if (context.__comparisonReady) {
+        result = buildDeterministicAnswer({ intent, catalog, comparison, context, policyHints });
+      } else {
+        result = await requestGemini({
+          apiKey,
+          model,
+          message,
+          history,
+          context,
+          intent,
+          catalog,
+          comparison,
+          policyHints,
+        });
+      }
     } catch {
       result = buildDeterministicAnswer({ intent, catalog, comparison, context, policyHints });
     }
@@ -1162,9 +1829,13 @@ module.exports.sendMessage = async (req, res) => {
       result.quickReplies =
         intent === INTENT.COMPARE
           ? ["Mẫu nào dễ phối charm hơn?", "Mẫu nào hợp làm quà tặng?", "Xem thêm mẫu tương tự"]
-          : intent === INTENT.SEARCH
-            ? ["Lọc dưới 2 triệu", "Gợi ý mẫu thanh lịch", "Gợi ý vòng charm"]
-            : ["Tìm vòng tay bạc", "So sánh 2 mẫu", "Hướng dẫn chọn size"];
+          : intent === INTENT.ORDER
+            ? ["Hướng dẫn tra cứu đơn", "Giải thích trạng thái đơn", "Hướng dẫn thanh toán"]
+            : intent === INTENT.PAYMENT
+              ? ["COD khác gì ZaloPay?", "Thanh toán lại đơn cũ", "Đơn chưa thanh toán xử lý sao?"]
+              : intent === INTENT.SEARCH
+                ? ["Lọc dưới 2 triệu", "Gợi ý mẫu thanh lịch", "Gợi ý vòng charm"]
+                : ["Tìm vòng tay bạc", "So sánh sản phẩm", "Hướng dẫn chọn size"];
     }
 
     return res.status(200).json({
