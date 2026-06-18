@@ -210,6 +210,7 @@ const GENERIC_COMPARE_TOKENS = new Set([
 ]);
 const MIN_COMPARE_MATCH_SCORE = 52;
 const EXPLICIT_COMPARE_MIN_SCORE = 74;
+const LOOSE_COMPARE_MIN_SCORE = 72;
 const CONTRAST_TOKEN_GROUPS = [
   ["hong", "xanh", "do", "tim", "trang", "den", "vang", "cam", "xam", "nau", "be"],
   ["bac", "silver", "vang", "gold"],
@@ -359,11 +360,71 @@ const hasStrongComparePhraseMatch = (queryName, productName) => {
   return phrases.slice(0, 3).some((phrase) => phrase.length >= 7 && product.includes(phrase));
 };
 
+const scoreLooseProductNameMatch = (queryName, productName) => {
+  const queryTokens = getCompareTokens(queryName);
+  const productTokens = new Set(getCompareTokens(productName));
+  if (!queryTokens.length || !productTokens.size) return 0;
+
+  let matchedWeight = 0;
+  let totalWeight = 0;
+  let distinctiveMatched = 0;
+  const distinctiveTokens = getDistinctiveCompareTokens(queryName);
+  for (const token of queryTokens) {
+    const weight = GENERIC_COMPARE_TOKENS.has(token) ? 1 : token.length >= 5 ? 5 : 3;
+    totalWeight += weight;
+    if (!productTokens.has(token)) continue;
+    matchedWeight += weight;
+    if (!GENERIC_COMPARE_TOKENS.has(token)) distinctiveMatched += 1;
+  }
+
+  let score = totalWeight > 0 ? Math.round((matchedWeight / totalWeight) * 100) : 0;
+  if (distinctiveTokens.length && distinctiveMatched === distinctiveTokens.length) score += 10;
+  else if (distinctiveTokens.length && distinctiveMatched === 0) score -= 20;
+
+  const contrastMismatches = countContrastMismatches(queryName, productName);
+  score = Math.max(0, score - contrastMismatches * 24);
+  if (contrastMismatches > 0) score = Math.min(score, LOOSE_COMPARE_MIN_SCORE - 1);
+  return Math.min(100, score);
+};
+
 const rankProductCandidates = (needle, products, minScore = MIN_COMPARE_MATCH_SCORE) =>
   uniqueBy(products || [], (item) => String(item?._id || item?.id || ""))
     .map((product) => ({ product, score: scoreProductNameMatch(needle, product?.name || "") }))
     .filter((entry) => entry.score >= minScore)
     .sort((left, right) => right.score - left.score);
+
+const rankLooseProductCandidates = (needle, products, minScore = LOOSE_COMPARE_MIN_SCORE) =>
+  uniqueBy(products || [], (item) => String(item?._id || item?.id || ""))
+    .map((product) => ({ product, score: scoreLooseProductNameMatch(needle, product?.name || "") }))
+    .filter((entry) => entry.score >= minScore)
+    .sort((left, right) => right.score - left.score);
+
+const fetchTokenMatchedProducts = async (name, limit = 24) => {
+  const cleaned = cleanCompareName(stripCompareIntro(name));
+  const tokens = uniqueBy(
+    [
+      ...getDistinctiveCompareTokens(cleaned),
+      ...getCompareTokens(cleaned).filter((token) => token.length >= 3),
+    ],
+    (token) => token
+  ).slice(0, 6);
+  if (!tokens.length) return [];
+
+  return Product.find({
+    deleted: false,
+    $or: tokens.flatMap((token) => [
+      { name: { $regex: escapeRegex(token), $options: "i" } },
+      { slug: { $regex: escapeRegex(token), $options: "i" } },
+    ]),
+  })
+    .populate("category", "name slug")
+    .populate("collections", "name slug")
+    .select(
+      "name slug description options variants priceMin priceMax category collections engraving"
+    )
+    .limit(limit)
+    .lean();
+};
 
 const loadCharmProductsForCompare = async () => {
   const charmCategories = await Category.find({
@@ -509,6 +570,29 @@ const buildVariantMaterialRegex = (material) => {
   return new RegExp(escapeRegex(material), "i");
 };
 
+const CATEGORY_ALIAS_MAP = [
+  { slug: "vong-kieng", aliases: ["vòng kiềng", "vong kieng", "kiềng", "kieng", "bangle"] },
+  { slug: "vong-da", aliases: ["vòng da", "vong da", "leather bracelet"] },
+  { slug: "vong-tay-mem", aliases: ["vòng tay mềm", "vong tay mem", "vòng mềm", "vong mem"] },
+  { slug: "vong-tay", aliases: ["vòng tay", "vong tay", "lắc tay", "lac tay", "bracelet"] },
+  { slug: "nhan", aliases: ["nhẫn", "nhan", "ring"] },
+  {
+    slug: "mat-day-chuyen",
+    aliases: ["mặt dây chuyền", "mat day chuyen", "mặt dây", "mat day", "pendant"],
+  },
+  { slug: "day-chuyen", aliases: ["dây chuyền", "day chuyen", "vòng cổ", "vong co", "necklace"] },
+  { slug: "hoa-tai", aliases: ["hoa tai", "bông tai", "bong tai", "khuyên tai", "earring"] },
+  { slug: "charm-treo", aliases: ["charm treo", "treo charm", "pendant charm"] },
+  { slug: "charm-xo", aliases: ["charm xỏ", "charm xo", "hạt charm", "hat charm", "bead charm"] },
+  { slug: "charm-chan", aliases: ["charm chặn", "charm chan", "clip charm", "stopper charm"] },
+  { slug: "charm-dinh-da", aliases: ["charm đính đá", "charm dinh da", "stone charm"] },
+  {
+    slug: "charm-thuy-tinh",
+    aliases: ["charm thủy tinh", "charm thuy tinh", "murano", "glass charm"],
+  },
+  { slug: "charm", aliases: ["charm"] },
+];
+
 const loadCategoryTree = async () => {
   const categories = await Category.find({ deleted: false }).select("_id slug name parent").lean();
 
@@ -544,52 +628,97 @@ const collectDescendantCategoryIds = (rootIds, childrenByParent) => {
   return Array.from(visited);
 };
 
-const findCategoryIds = async (request) => {
-  const { categories, childrenByParent } = await loadCategoryTree();
-  const requestedRootSlugs = uniqueBy(
+const buildCategorySearchHaystack = (request, categories) =>
+  uniqueBy(
     [
-      ...asArray(request.categoryRootSlugs),
-      ...(request.categoryRootSlugs?.length
-        ? []
-        : request.listingCategorySlug
-          ? [request.listingCategorySlug]
-          : []),
-    ].filter(Boolean),
+      ...asArray(request.categorySlugs),
+      ...asArray(request.categoryHints),
+      ...asArray(request.searchTerms),
+      request.listingCategoryName,
+      request.listingCategorySlug,
+      ...categories.map((item) => item?.name || ""),
+    ]
+      .map((item) => slugifyLite(item))
+      .filter(Boolean),
     (item) => item
   );
 
-  const rootIds = new Set();
+const inferRequestedCategorySlugs = (request, categories) => {
+  const haystack = buildCategorySearchHaystack(request, []);
+  const explicit = new Set(
+    [...asArray(request.categorySlugs), ...asArray(request.categoryRootSlugs)].map((item) =>
+      String(item || "")
+        .trim()
+        .toLowerCase()
+    )
+  );
+  const matched = new Set([...explicit].filter(Boolean));
+
+  for (const { slug, aliases } of CATEGORY_ALIAS_MAP) {
+    const normalizedAliases = aliases.map((alias) => slugifyLite(alias)).filter(Boolean);
+    if (normalizedAliases.some((alias) => haystack.some((term) => term.includes(alias))))
+      matched.add(slug);
+  }
+
+  for (const category of categories) {
+    const slug = String(category?.slug || "")
+      .trim()
+      .toLowerCase();
+    const name = slugifyLite(category?.name || "");
+    if (!slug || !name) continue;
+    if (haystack.some((term) => term.includes(name) || term.includes(slug.replace(/-/g, " "))))
+      matched.add(slug);
+  }
+
+  return Array.from(matched);
+};
+
+const findCategoryIds = async (request) => {
+  const { categories, byId, childrenByParent } = await loadCategoryTree();
+  const slugToId = new Map();
   for (const category of categories) {
     const categoryId = String(category?._id || "");
     const categorySlug = String(category?.slug || "")
       .trim()
       .toLowerCase();
-    const categoryName = slugifyLite(category?.name || "");
+    if (categoryId && categorySlug) slugToId.set(categorySlug, categoryId);
+  }
 
-    if (
-      requestedRootSlugs.some((slug) => {
-        const safeSlug = String(slug || "")
-          .trim()
-          .toLowerCase();
-        return safeSlug && (categorySlug === safeSlug || categorySlug.startsWith(`${safeSlug}-`));
-      })
-    ) {
-      rootIds.add(categoryId);
+  const requestedSlugs = inferRequestedCategorySlugs(request, categories);
+  const matchedIds = new Set();
+  for (const slug of requestedSlugs) {
+    const normalizedSlug = String(slug || "")
+      .trim()
+      .toLowerCase();
+    const directId = slugToId.get(normalizedSlug);
+    if (directId) {
+      matchedIds.add(directId);
       continue;
     }
-
-    if (
-      !request.categoryRootSlugs?.length &&
-      request.listingCategoryName &&
-      categoryName &&
-      categoryName === slugifyLite(request.listingCategoryName)
-    ) {
-      rootIds.add(categoryId);
+    for (const category of categories) {
+      const categoryId = String(category?._id || "");
+      const categorySlug = String(category?.slug || "")
+        .trim()
+        .toLowerCase();
+      if (normalizedSlug && categorySlug.startsWith(`${normalizedSlug}-`))
+        matchedIds.add(categoryId);
     }
   }
 
-  if (!rootIds.size) return [];
-  return collectDescendantCategoryIds(Array.from(rootIds), childrenByParent);
+  if (!matchedIds.size && request.listingCategorySlug) {
+    const listingId = slugToId.get(String(request.listingCategorySlug).trim().toLowerCase());
+    if (listingId) matchedIds.add(listingId);
+  }
+
+  const expandedIds = new Set();
+  for (const categoryId of matchedIds) {
+    const category = byId.get(String(categoryId));
+    if (!category) continue;
+    const descendants = collectDescendantCategoryIds([categoryId], childrenByParent);
+    for (const id of descendants) expandedIds.add(id);
+  }
+
+  return Array.from(expandedIds);
 };
 
 const buildProductQuery = async (request, context) => {
@@ -609,10 +738,12 @@ const buildProductQuery = async (request, context) => {
   for (const term of rawTerms) {
     const safe = asText(term, 120);
     if (!safe) continue;
-    const isLongPhrase = safe.split(" ").length >= 4;
-    if (safe.length >= 2 && !isLongPhrase) {
+    if (safe.length >= 2) {
       orTerms.push({ name: { $regex: escapeRegex(safe), $options: "i" } });
       orTerms.push({ description: { $regex: escapeRegex(safe), $options: "i" } });
+      orTerms.push({
+        slug: { $regex: escapeRegex(slugifyLite(safe).replace(/\s+/g, "-")), $options: "i" },
+      });
     }
   }
 
@@ -663,7 +794,13 @@ const rankProducts = (products, request, context) => {
         let score = 0;
         const name = product?.name || "";
         const categoryName = product?.category?.name || "";
-        for (const term of terms) score += scoreNameSimilarity(term, name);
+        const categorySlug = String(product?.category?.slug || "")
+          .trim()
+          .toLowerCase();
+        for (const term of terms) {
+          score += scoreNameSimilarity(term, name);
+          score += scoreLooseProductNameMatch(term, name);
+        }
         for (const hint of request.materialHints) {
           const hay = `${asArray(product?.options?.materials).join(" ")} ${asArray(
             product?.variants
@@ -672,12 +809,31 @@ const rankProducts = (products, request, context) => {
             .join(" ")}`;
           if (slugifyLite(hay).includes(slugifyLite(hint))) score += 20;
         }
-        for (const hint of request.categoryHints) {
+        for (const hint of uniqueBy(
+          [
+            ...asArray(request.categoryHints),
+            ...asArray(request.categorySlugs),
+            ...asArray(request.categoryRootSlugs),
+          ],
+          (item) => item
+        )) {
+          const normalizedHint = String(hint || "")
+            .trim()
+            .toLowerCase();
+          if (!normalizedHint) continue;
+          if (categorySlug === normalizedHint) {
+            score += 70;
+            continue;
+          }
+          if (categorySlug.startsWith(`${normalizedHint}-`)) {
+            score += 50;
+            continue;
+          }
           if (
             slugifyLite(categoryName).includes(slugifyLite(hint)) ||
             slugifyLite(name).includes(slugifyLite(hint))
           )
-            score += 20;
+            score += 40;
         }
         if (visibleNames.some((item) => item.id && String(item.id) === String(product?._id)))
           score += 10;
@@ -756,6 +912,16 @@ const findProductByName = async (name, context = {}) => {
 
   const best = rankProductCandidates(cleaned, docs)[0];
   if (best?.score >= MIN_COMPARE_MATCH_SCORE) return toProductCard(best.product);
+  const searchFallback = await searchCatalogProducts({ message: cleaned, context });
+  const topSearchProduct = asArray(searchFallback?.products)[0];
+  if (
+    topSearchProduct &&
+    scoreLooseProductNameMatch(cleaned, topSearchProduct.name) >= LOOSE_COMPARE_MIN_SCORE
+  )
+    return topSearchProduct;
+  const tokenDocs = await fetchTokenMatchedProducts(cleaned);
+  const looseBest = rankLooseProductCandidates(cleaned, tokenDocs)[0];
+  if (looseBest?.score >= LOOSE_COMPARE_MIN_SCORE) return toProductCard(looseBest.product);
   if (visibleBest?.score >= MIN_COMPARE_MATCH_SCORE && visibleBest?.slug) {
     const fallback = await Product.findOne({ deleted: false, slug: visibleBest.slug })
       .populate("category", "name slug")
@@ -883,9 +1049,11 @@ const findProductForCompareName = async (name, excludeIds = []) => {
   const exact = await findProductByName(cleaned, {});
   if (exact && !excludeIds.map(String).includes(String(exact.id))) {
     const exactScore = scoreProductNameMatch(cleaned, exact.name);
+    const looseExactScore = scoreLooseProductNameMatch(cleaned, exact.name);
     if (
-      exactScore >= EXPLICIT_COMPARE_MIN_SCORE &&
-      (hasStrongComparePhraseMatch(cleaned, exact.name) || exactScore >= 88)
+      (exactScore >= EXPLICIT_COMPARE_MIN_SCORE &&
+        (hasStrongComparePhraseMatch(cleaned, exact.name) || exactScore >= 88)) ||
+      looseExactScore >= LOOSE_COMPARE_MIN_SCORE
     )
       return exact;
   }
@@ -902,14 +1070,34 @@ const findProductForCompareName = async (name, excludeIds = []) => {
     )
     .sort((left, right) => right.score - left.score);
 
-  return ranked[0] ? toProductCard(ranked[0].product) : null;
+  if (ranked[0]) return toProductCard(ranked[0].product);
+
+  const searchFallback = await searchCatalogProducts({ message: cleaned, context: {} });
+  const topSearchProduct = asArray(searchFallback?.products).find(
+    (product) => !exclude.has(String(product?.id || ""))
+  );
+  if (
+    topSearchProduct &&
+    scoreLooseProductNameMatch(cleaned, topSearchProduct.name) >= LOOSE_COMPARE_MIN_SCORE
+  )
+    return topSearchProduct;
+
+  const looseCandidates = await fetchTokenMatchedProducts(cleaned, 48);
+  const looseRanked = rankLooseProductCandidates(
+    cleaned,
+    looseCandidates.filter((product) => !exclude.has(String(product?._id || product?.id || "")))
+  );
+  if (looseRanked[0]) return toProductCard(looseRanked[0].product);
+
+  return null;
 };
 
 const parseCompareNames = (message) => {
   const payload = stripCompareIntro(String(message || "").trim());
   const separators = [" và ", " voi ", " với ", " vs ", " so với "];
+  const normalizedPayload = payload.toLowerCase();
   for (const sep of separators) {
-    const idx = payload.toLowerCase().indexOf(sep.trim().toLowerCase());
+    const idx = normalizedPayload.indexOf(sep.toLowerCase());
     if (idx > 0) {
       const left = cleanCompareName(payload.slice(0, idx));
       const right = cleanCompareName(payload.slice(idx + sep.length));
@@ -921,8 +1109,9 @@ const parseCompareNames = (message) => {
     .replace(/\s*[,.]?\s*so sánh.*$/i, "")
     .replace(/\s*compare.*$/i, "")
     .trim();
+  const normalizedWithoutCompareClause = withoutCompareClause.toLowerCase();
   for (const sep of separators) {
-    const idx = withoutCompareClause.toLowerCase().indexOf(sep.trim().toLowerCase());
+    const idx = normalizedWithoutCompareClause.indexOf(sep.toLowerCase());
     if (idx > 0) {
       const left = cleanCompareName(withoutCompareClause.slice(0, idx));
       const right = cleanCompareName(withoutCompareClause.slice(idx + sep.length));
@@ -940,7 +1129,10 @@ const buildComparison = async ({ message, context, catalog }) => {
     for (const name of names.slice(0, 2)) {
       const product = await findProductForCompareName(name, usedIds);
       if (!product?.id) continue;
-      if (scoreProductNameMatch(name, product.name) < EXPLICIT_COMPARE_MIN_SCORE) continue;
+      const strictScore = scoreProductNameMatch(name, product.name);
+      const looseScore = scoreLooseProductNameMatch(name, product.name);
+      if (strictScore < EXPLICIT_COMPARE_MIN_SCORE && looseScore < LOOSE_COMPARE_MIN_SCORE)
+        continue;
       usedIds.push(product.id);
       products.push(product);
     }

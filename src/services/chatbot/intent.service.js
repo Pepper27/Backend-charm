@@ -12,31 +12,85 @@ const { INTENT, asArray, asText, extractOrderCode, extractPriceNumber, slugifyLi
     };
   })();
 
+const containsNormalizedTerm = (text, term) => {
+  const hay = ` ${slugifyLite(text)} `;
+  const needle = ` ${slugifyLite(term)} `;
+  return hay.includes(needle);
+};
+
 const CATEGORY_SYNONYMS = [
   {
-    key: "bracelet",
-    keywords: ["vòng", "vong", "vòng tay", "lac tay", "lắc tay", "bracelet"],
+    key: "vong-kieng",
+    keywords: ["vòng kiềng", "vong kieng", "kiềng", "kieng", "bangle"],
     rootSlugs: ["vong-tay"],
   },
-  { key: "ring", keywords: ["nhẫn", "nhan", "ring"], rootSlugs: ["nhan"] },
   {
-    key: "necklace",
-    keywords: ["dây chuyền", "day chuyen", "mặt dây chuyền", "necklace"],
+    key: "vong-da",
+    keywords: ["vòng da", "vong da", "leather bracelet"],
+    rootSlugs: ["vong-tay"],
+  },
+  {
+    key: "vong-tay-mem",
+    keywords: ["vòng tay mềm", "vong tay mem", "vòng mềm", "vong mem"],
+    rootSlugs: ["vong-tay"],
+  },
+  {
+    key: "vong-tay",
+    keywords: ["vòng tay", "vong tay", "lắc tay", "lac tay", "bracelet"],
+    rootSlugs: ["vong-tay"],
+  },
+  { key: "nhan", keywords: ["nhẫn", "nhan", "ring"], rootSlugs: ["nhan"] },
+  {
+    key: "mat-day-chuyen",
+    keywords: ["mặt dây chuyền", "mat day chuyen", "mặt dây", "mat day", "pendant"],
     rootSlugs: ["day-chuyen"],
   },
   {
-    key: "earring",
+    key: "day-chuyen",
+    keywords: ["dây chuyền", "day chuyen", "vòng cổ", "vong co", "necklace"],
+    rootSlugs: ["day-chuyen"],
+  },
+  {
+    key: "hoa-tai",
     keywords: ["hoa tai", "bông tai", "bong tai", "khuyên tai", "earring"],
     rootSlugs: ["hoa-tai"],
   },
-  { key: "charm", keywords: ["charm", "hạt charm", "hat charm"], rootSlugs: ["charm"] },
+  {
+    key: "charm-treo",
+    keywords: ["charm treo", "pendant charm", "treo charm"],
+    rootSlugs: ["charm"],
+  },
+  {
+    key: "charm-xo",
+    keywords: ["charm xỏ", "charm xo", "hat charm", "hạt charm", "bead charm"],
+    rootSlugs: ["charm"],
+  },
+  {
+    key: "charm-chan",
+    keywords: ["charm chặn", "charm chan", "clip charm", "stopper charm"],
+    rootSlugs: ["charm"],
+  },
+  {
+    key: "charm-dinh-da",
+    keywords: ["charm đính đá", "charm dinh da", "stone charm"],
+    rootSlugs: ["charm"],
+  },
+  {
+    key: "charm-thuy-tinh",
+    keywords: ["charm thủy tinh", "charm thuy tinh", "murano", "glass charm"],
+    rootSlugs: ["charm"],
+  },
+  { key: "charm", keywords: ["charm"], rootSlugs: ["charm"] },
 ];
 
 const MATERIAL_SYNONYMS = [
   { key: "bạc", keywords: ["bạc", "bac", "silver", "sterling"] },
-  { key: "mạ vàng", keywords: ["mạ vàng", "ma vang", "gold plated"] },
+  {
+    key: "mạ vàng",
+    keywords: ["mạ vàng", "ma vang", "gold plated", "vàng hồng", "vang hong", "rose gold"],
+  },
   { key: "vàng", keywords: ["vàng", "vang", "gold"] },
-  { key: "da", keywords: ["dây da", "day da", "leather", "da"] },
+  { key: "da", keywords: ["dây da", "day da", "leather"] },
 ];
 
 const normalizeMaterialHints = (materialHints) => {
@@ -121,7 +175,7 @@ const extractSearchTokens = (value) =>
 
 const buildSearchTerms = (raw) => {
   const directTerms = String(raw || "")
-    .split(/,|;|\.|\?|!|\n|\band\b|\bvà\b/i)
+    .split(/,|;|\.|\?|!|\n|\s+and\s+|\s+và\s+/i)
     .map((item) => asText(item, 120))
     .filter(Boolean);
   const tokenTerms = extractSearchTokens(raw);
@@ -139,7 +193,7 @@ const parseVariantInquiry = (message) => {
   const requestedSize = extractRequestedSize(message);
   const materialHints = normalizeMaterialHints(
     MATERIAL_SYNONYMS.filter((item) =>
-      item.keywords.some((word) => slugifyLite(message).includes(slugifyLite(word)))
+      item.keywords.some((word) => containsNormalizedTerm(message, word))
     ).map((item) => item.key)
   );
   const text = slugifyLite(message);
@@ -155,6 +209,7 @@ const hasSearchState = (request) =>
   Boolean(
     request &&
     (asArray(request.categoryRootSlugs).length ||
+      asArray(request.categorySlugs).length ||
       asArray(request.materialHints).length ||
       Number(request.priceMin) > 0 ||
       Number(request.priceMax) > 0 ||
@@ -166,6 +221,7 @@ const isLikelySearchFollowUp = (message, request) => {
   if (!text) return false;
   const hasFacetUpdate =
     asArray(request?.categoryRootSlugs).length ||
+    asArray(request?.categorySlugs).length ||
     asArray(request?.materialHints).length ||
     Number(request?.priceMin) > 0 ||
     Number(request?.priceMax) > 0;
@@ -193,6 +249,9 @@ const mergeSearchRequests = (previousRequest, currentRequest, options = {}) => {
     categoryRootSlugs: asArray(current.categoryRootSlugs).length
       ? current.categoryRootSlugs
       : asArray(previous.categoryRootSlugs),
+    categorySlugs: asArray(current.categorySlugs).length
+      ? current.categorySlugs
+      : asArray(previous.categorySlugs),
     materialHints: asArray(current.materialHints).length
       ? current.materialHints
       : asArray(previous.materialHints),
@@ -263,12 +322,19 @@ const parseProductRequest = (message, context) => {
   const raw = String(message || "");
   const text = slugifyLite(raw);
   const matchedCategories = CATEGORY_SYNONYMS.filter((item) =>
-    item.keywords.some((word) => text.includes(slugifyLite(word)))
+    item.keywords.some((word) => containsNormalizedTerm(text, word))
   );
-  const categoryHints = matchedCategories.map((item) => item.key);
+  const categoryHints = uniqueBy(
+    matchedCategories.map((item) => item.key),
+    (item) => item
+  );
+  const categorySlugs = uniqueBy(
+    matchedCategories.map((item) => item.key),
+    (item) => item
+  );
   const materialHints = normalizeMaterialHints(
     MATERIAL_SYNONYMS.filter((item) =>
-      item.keywords.some((word) => text.includes(slugifyLite(word)))
+      item.keywords.some((word) => containsNormalizedTerm(text, word))
     ).map((item) => item.key)
   );
 
@@ -290,6 +356,7 @@ const parseProductRequest = (message, context) => {
 
   return {
     categoryHints,
+    categorySlugs,
     categoryRootSlugs: uniqueBy(
       matchedCategories.flatMap((item) => item.rootSlugs || []),
       (item) => item

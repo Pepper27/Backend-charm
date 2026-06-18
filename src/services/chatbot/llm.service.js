@@ -43,6 +43,17 @@ const buildBraceletSizeAdvice = ({ product, wristCm }) => {
   };
 };
 
+const requestTargetsCharm = (request) =>
+  [
+    ...asArray(request?.categoryHints),
+    ...asArray(request?.categorySlugs),
+    ...asArray(request?.categoryRootSlugs),
+  ].some((item) =>
+    String(item || "")
+      .toLowerCase()
+      .startsWith("charm")
+  );
+
 const serializeContextForPrompt = (context) => JSON.stringify(context, null, 2);
 
 const buildSystemInstruction = () => `Bạn là trợ lý bán hàng AI của Kim Bảo Jewelry.
@@ -226,7 +237,7 @@ const buildDeterministicAnswer = ({ intent, catalog, comparison, context, policy
       .sort((a, b) => (Number(b.totalSold) || 0) - (Number(a.totalSold) || 0))
       .slice(0, 4);
     const request = parseProductRequest(context.__messageRaw || "", context);
-    const label = request.categoryHints.includes("charm") ? "mẫu charm" : "mẫu sản phẩm";
+    const label = requestTargetsCharm(request) ? "mẫu charm" : "mẫu sản phẩm";
     return {
       answer: `Mình gợi ý bạn vài ${label} đang được quan tâm nhiều: ${top.map((item, index) => `${index + 1}. ${item.name}${item.priceText ? ` - ${item.priceText}` : ""}`).join("; ")}. Nếu muốn, mình có thể lọc tiếp theo phong cách thanh lịch, quà tặng hoặc để phối với vòng bạc.`,
       suggestions: top.map((item) => item.name).slice(0, 3),
@@ -351,7 +362,7 @@ const buildDeterministicAnswer = ({ intent, catalog, comparison, context, policy
       context.__searchRequest || parseProductRequest(context.__messageRaw || "", context);
     const budgetText =
       request.priceMax > 0 ? ` dưới ${request.priceMax.toLocaleString("vi-VN")}đ` : "";
-    const categoryText = request.categoryHints.includes("charm") ? "mẫu charm" : "sản phẩm";
+    const categoryText = requestTargetsCharm(request) ? "mẫu charm" : "sản phẩm";
     return {
       answer: `Hiện tại mình chưa tìm thấy ${categoryText}${budgetText} đúng với yêu cầu của bạn. Bạn có thể thử nới ngân sách thêm một chút hoặc để mình gợi ý các mẫu gần mức giá đó nhất.`,
       suggestions: [],
@@ -557,6 +568,7 @@ const resolveAssistantResult = async ({
   policyHints,
 }) => {
   if (
+    intent === INTENT.COMPARE ||
     context.__comparisonReady ||
     [INTENT.STOCK, INTENT.DETAIL, INTENT.ORDER, INTENT.PAYMENT, INTENT.POLICY].includes(intent)
   ) {
