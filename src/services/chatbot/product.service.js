@@ -1339,6 +1339,7 @@ module.exports = {
   toProductCard,
   scoreProductNameMatch,
   parseCompareNames,
+  findProductByName,
   searchCatalogProducts,
   resolveConversationProduct,
   resolveVariantStock,
