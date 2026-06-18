@@ -1,5 +1,9 @@
 const { normalizeContext } = require("./context.service");
 const { lookupOrderForChat } = require("./order.service");
+const Product = require("../../models/product.model");
+const Category = require("../../models/category.model");
+const Collection = require("../../models/collection.model");
+const Wishlist = require("../../models/wishlist.model");
 const {
   findProductByName,
   resolveConversationProduct,
@@ -20,17 +24,27 @@ const {
 
 const DEFAULT_QUICK_REPLIES = ["Tìm vòng tay bạc", "Tra cứu đơn hàng", "Hướng dẫn thanh toán"];
 
+const NO_DATA_ANSWER =
+  "Hiện hệ thống chưa có thông tin phù hợp để trả lời câu hỏi này. Bạn có thể hỏi các vấn đề khác giúp mình nhé.";
+
 const buildProductSummary = (product) => {
   if (!product?.name) return null;
+  const firstVariantImage =
+    asArray(product.variantSummaries)
+      .map((variant) => asText(variant?.image, 500))
+      .find(Boolean) || asText(product.image, 500);
   return {
     id: product.id || "",
     slug: product.slug || "",
     name: product.name,
+    image: firstVariantImage || "",
     priceText: product.priceText || "",
     materialText: product.materialText || "",
     categoryName: product.categoryName || "",
     description: product.description || "",
     canEngrave: Boolean(product.canEngrave),
+    totalSold: Math.max(0, Number(product.totalSold) || 0),
+    matchedSold: Math.max(0, Number(product.matchedSold) || 0),
     variantSummaries: asArray(product.variantSummaries)
       .slice(0, 10)
       .map((variant) => ({
@@ -41,7 +55,53 @@ const buildProductSummary = (product) => {
         quantity: Math.max(0, Number(variant?.quantity) || 0),
         sold: Math.max(0, Number(variant?.sold) || 0),
         price: Math.max(0, Number(variant?.price) || 0),
+        image: asText(variant?.image, 500),
       })),
+  };
+};
+
+const formatPriceTextFromVariants = (variants, priceMin, priceMax) => {
+  const prices = asArray(variants)
+    .map((item) => Math.max(0, Number(item?.price) || 0))
+    .filter(Boolean);
+  const low = prices.length ? Math.min(...prices) : Math.max(0, Number(priceMin) || 0);
+  const high = prices.length ? Math.max(...prices) : Math.max(0, Number(priceMax) || low);
+  if (!low && !high) return "";
+  if (low && high && low !== high)
+    return `${low.toLocaleString("vi-VN")}đ - ${high.toLocaleString("vi-VN")}đ`;
+  const value = low || high;
+  return value ? `${value.toLocaleString("vi-VN")}đ` : "";
+};
+
+const buildProductSummaryFromDoc = (product) => {
+  if (!product?._id || !product?.name) return null;
+  const variants = asArray(product?.variants);
+  const materials = [
+    ...new Set(variants.map((item) => asText(item?.material, 80)).filter(Boolean)),
+  ];
+  const totalSold = variants.reduce((sum, item) => sum + (Number(item?.sold) || 0), 0);
+  return {
+    id: String(product._id || ""),
+    slug: asText(product?.slug, 120),
+    name: asText(product?.name, 180),
+    image: asText(variants[0]?.images?.[0], 500),
+    priceText: formatPriceTextFromVariants(variants, product?.priceMin, product?.priceMax),
+    materialText: materials.join(", "),
+    categoryName: asText(product?.category?.name || "", 120),
+    description: asText(product?.description, 220),
+    canEngrave: Boolean(product?.engraving?.enabled),
+    totalSold,
+    matchedSold: totalSold,
+    variantSummaries: variants.slice(0, 10).map((variant) => ({
+      code: asText(variant?.code, 60),
+      material: asText(variant?.material, 80),
+      color: asText(variant?.color, 40),
+      size: asText(variant?.size, 20),
+      quantity: Math.max(0, Number(variant?.quantity) || 0),
+      sold: Math.max(0, Number(variant?.sold) || 0),
+      price: Math.max(0, Number(variant?.price) || 0),
+      image: asText(variant?.images?.[0], 500),
+    })),
   };
 };
 
@@ -225,20 +285,32 @@ const formatProductListAnswer = (response, requestedNeed) => {
   }
 
   const lines = [];
+  const isBestSeller = response?.bestSeller === true;
   lines.push(
-    products.length >= 3
-      ? `Mình gợi ý cho bạn ${products.length} sản phẩm phù hợp:`
-      : `Hiện mình tìm được ${products.length} sản phẩm phù hợp nhất:`
+    isBestSeller
+      ? products.length >= 3
+        ? `Mình gợi ý cho bạn ${products.length} sản phẩm bán chạy phù hợp nhất:`
+        : `Hiện mình tìm được ${products.length} sản phẩm bán chạy phù hợp nhất:`
+      : products.length >= 3
+        ? `Mình gợi ý cho bạn ${products.length} sản phẩm phù hợp:`
+        : `Hiện mình tìm được ${products.length} sản phẩm phù hợp nhất:`
   );
   lines.push("");
   for (const product of products) {
     lines.push(`- ${product.name}`);
     lines.push(`  Giá: ${product.priceText || "Chưa có dữ liệu"}`);
     lines.push(`  Chất liệu: ${product.materialText || "Chưa có dữ liệu"}`);
+    if (isBestSeller && product.matchedSold > 0) {
+      lines.push(`  Lượt bán nổi bật: ${product.matchedSold}`);
+    }
     lines.push(`  Điểm nổi bật: ${summarizeDescription(product.description)}`);
     lines.push("");
   }
-  lines.push("Nếu bạn muốn, mình có thể tư vấn thêm về size hoặc mẫu phù hợp để làm quà.");
+  lines.push(
+    isBestSeller
+      ? "Danh sách này được ưu tiên theo lượt bán của các biến thể đang khớp với yêu cầu giá/chất liệu của bạn."
+      : "Nếu bạn muốn, mình có thể tư vấn thêm về size hoặc mẫu phù hợp để làm quà."
+  );
   return lines.join("\n").trim();
 };
 
@@ -404,6 +476,142 @@ const formatShippingPolicyAnswer = (response) => {
   ].join("\n");
 };
 
+const formatCollectionInfoAnswer = (response) => {
+  if (response?.notFound) {
+    return `Hiện hệ thống chưa có bộ sưu tập "${response.requestedName}". Bạn có thể hỏi bộ sưu tập hoặc sản phẩm khác giúp mình nhé.`;
+  }
+
+  const collections = asArray(response?.collections).filter((item) => item?.name);
+  if (!response?.requestedName && collections.length) {
+    return [
+      "Hiện cửa hàng có các bộ sưu tập sau:",
+      "",
+      ...collections.map((item) => `- ${item.name}`),
+    ].join("\n");
+  }
+
+  const collection = response?.collection;
+  if (!collection?.name) return NO_DATA_ANSWER;
+
+  return [
+    `Mình đã kiểm tra bộ sưu tập ${collection.name}:`,
+    "",
+    `- Tên bộ sưu tập: ${collection.name}`,
+    `- Mô tả: ${summarizeDescription(collection.description)}`,
+    `- Số sản phẩm hiện có: ${Math.max(0, Number(response.productCount) || 0)}`,
+  ].join("\n");
+};
+
+const formatCollectionProductsAnswer = (response) => {
+  if (response?.notFound) {
+    return `Hiện hệ thống chưa có bộ sưu tập "${response.requestedName}". Bạn có thể hỏi bộ sưu tập khác giúp mình nhé.`;
+  }
+
+  const collectionName = response?.collection?.name || response?.requestedName || "bộ sưu tập này";
+  const products = asArray(response?.products).filter((item) => item?.name);
+  if (!products.length) {
+    return `Hiện hệ thống chưa có sản phẩm nào thuộc bộ sưu tập ${collectionName}. Bạn có thể hỏi bộ sưu tập khác giúp mình nhé.`;
+  }
+
+  const lines = [
+    `Mình tìm thấy ${products.length} sản phẩm thuộc bộ sưu tập ${collectionName}:`,
+    "",
+  ];
+  for (const product of products) {
+    lines.push(`- ${product.name}`);
+    lines.push(`  Giá: ${product.priceText || "Chưa có dữ liệu"}`);
+    lines.push(`  Chất liệu: ${product.materialText || "Chưa có dữ liệu"}`);
+    lines.push(`  Điểm nổi bật: ${summarizeDescription(product.description)}`);
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+};
+
+const formatCategoryInfoAnswer = (response) => {
+  const categories = asArray(response?.categories).filter((item) => item?.name);
+  if (response?.requestedName && response?.notFound) {
+    return `Hiện hệ thống chưa có danh mục "${response.requestedName}". Bạn có thể hỏi danh mục khác giúp mình nhé.`;
+  }
+
+  if (!categories.length) return NO_DATA_ANSWER;
+
+  if (response?.requestedName) {
+    const category = categories[0];
+    return [
+      `Mình đã kiểm tra danh mục ${category.name}:`,
+      "",
+      `- Tên danh mục: ${category.name}`,
+      `- Số sản phẩm hiện có: ${Math.max(0, Number(category.productCount) || 0)}`,
+      ...(category.children?.length
+        ? ["- Danh mục con:", ...category.children.map((item) => `  • ${item.name}`)]
+        : []),
+      ...(category.collections?.length
+        ? [
+            `- Bộ sưu tập liên quan: ${category.collections
+              .slice(0, 5)
+              .map((item) => item.name)
+              .join(", ")}`,
+          ]
+        : []),
+    ].join("\n");
+  }
+
+  const lines = ["Hiện cửa hàng có các loại trang sức sau:", ""];
+  for (const category of categories) {
+    lines.push(`- ${category.name}`);
+    for (const child of asArray(category.children)) {
+      lines.push(`  • ${child.name}`);
+    }
+  }
+  return lines.join("\n");
+};
+
+const formatCategoryProductsAnswer = (response) => {
+  if (response?.notFound) {
+    return `Hiện hệ thống chưa có danh mục "${response.requestedName}". Bạn có thể hỏi danh mục khác giúp mình nhé.`;
+  }
+
+  const categoryName = response?.category?.name || response?.requestedName || "danh mục này";
+  const products = asArray(response?.products).filter((item) => item?.name);
+  if (!products.length) {
+    return `Hiện hệ thống chưa có sản phẩm nào trong danh mục ${categoryName}. Bạn có thể hỏi danh mục khác giúp mình nhé.`;
+  }
+
+  const lines = [`Mình tìm thấy ${products.length} sản phẩm thuộc danh mục ${categoryName}:`, ""];
+  for (const product of products) {
+    lines.push(`- ${product.name}`);
+    lines.push(`  Giá: ${product.priceText || "Chưa có dữ liệu"}`);
+    lines.push(`  Chất liệu: ${product.materialText || "Chưa có dữ liệu"}`);
+    lines.push(`  Điểm nổi bật: ${summarizeDescription(product.description)}`);
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+};
+
+const formatWishlistTopAnswer = (response) => {
+  const products = asArray(response?.products).filter((item) => item?.name);
+  if (!products.length) {
+    return "Hiện hệ thống chưa có dữ liệu wishlist để xác định sản phẩm được yêu thích nhất. Bạn có thể hỏi sản phẩm hoặc danh mục khác giúp mình nhé.";
+  }
+
+  const lines = [
+    products.length > 1
+      ? `Mình gợi ý ${products.length} sản phẩm đang được nhiều khách yêu thích nhất:`
+      : "Mình tìm thấy 1 sản phẩm đang được nhiều khách yêu thích:",
+    "",
+  ];
+  for (const product of products) {
+    lines.push(`- ${product.name}`);
+    lines.push(`  Giá: ${product.priceText || "Chưa có dữ liệu"}`);
+    lines.push(`  Chất liệu: ${product.materialText || "Chưa có dữ liệu"}`);
+    if (product.wishCount > 0) lines.push(`  Lượt yêu thích: ${product.wishCount}`);
+    lines.push(`  Điểm nổi bật: ${summarizeDescription(product.description)}`);
+    lines.push("");
+  }
+  lines.push("Danh sách này được xếp theo số lượt wishlist cao nhất trong hệ thống.");
+  return lines.join("\n").trim();
+};
+
 const getLatestToolResponse = (toolCalls, name) => {
   for (let index = asArray(toolCalls).length - 1; index >= 0; index -= 1) {
     const call = toolCalls[index];
@@ -509,10 +717,74 @@ const resolveFormattedAnswer = ({ payload, toolCalls }) => {
     };
   }
 
+  const collectionInfo = getLatestToolResponse(toolCalls, "layThongTinBoSuuTap");
+  if (collectionInfo) {
+    return {
+      answer: formatCollectionInfoAnswer(collectionInfo),
+      suggestions: ["Xem sản phẩm theo bộ sưu tập", "Tìm sản phẩm", "Liên hệ hỗ trợ"],
+      quickReplies: ["Xem bộ sưu tập", "Tìm sản phẩm", "Liên hệ hỗ trợ"],
+    };
+  }
+
+  const collectionProducts = getLatestToolResponse(toolCalls, "timSanPhamTheoBoSuuTap");
+  if (collectionProducts) {
+    return {
+      answer: formatCollectionProductsAnswer(collectionProducts),
+      suggestions: asArray(collectionProducts.products)
+        .slice(0, 3)
+        .map((item) => `Xem chi tiết ${item.name}`),
+      quickReplies: ["Xem bộ sưu tập khác", "Tìm sản phẩm", "Liên hệ hỗ trợ"],
+    };
+  }
+
+  const categoryInfo = getLatestToolResponse(toolCalls, "layDanhMucSanPham");
+  if (categoryInfo) {
+    return {
+      answer: formatCategoryInfoAnswer(categoryInfo),
+      suggestions: ["Tìm sản phẩm theo danh mục", "Xem bộ sưu tập", "Liên hệ hỗ trợ"],
+      quickReplies: ["Xem danh mục", "Tìm sản phẩm", "Liên hệ hỗ trợ"],
+    };
+  }
+
+  const categoryProducts = getLatestToolResponse(toolCalls, "timSanPhamTheoDanhMuc");
+  if (categoryProducts) {
+    return {
+      answer: formatCategoryProductsAnswer(categoryProducts),
+      suggestions: asArray(categoryProducts.products)
+        .slice(0, 3)
+        .map((item) => `Xem chi tiết ${item.name}`),
+      quickReplies: ["Xem danh mục khác", "Tìm sản phẩm", "Liên hệ hỗ trợ"],
+    };
+  }
+
+  const wishlistTop = getLatestToolResponse(toolCalls, "laySanPhamYeuThichNhat");
+  if (wishlistTop) {
+    return {
+      answer: formatWishlistTopAnswer(wishlistTop),
+      suggestions: asArray(wishlistTop.products)
+        .slice(0, 3)
+        .map((item) => `Xem chi tiết ${item.name}`),
+      quickReplies: ["Sản phẩm bán chạy", "Tìm sản phẩm", "Liên hệ hỗ trợ"],
+    };
+  }
+
+  if (!asArray(toolCalls).length) {
+    return {
+      answer: NO_DATA_ANSWER,
+      suggestions: ["Tìm sản phẩm", "Tra cứu đơn hàng", "Hướng dẫn thanh toán"],
+      quickReplies: ["Tìm sản phẩm", "Tra cứu đơn hàng", "Hỗ trợ thanh toán"],
+    };
+  }
+
+  const safeFallback = sanitizePlainAnswer(payload.answer);
   return {
-    answer: sanitizePlainAnswer(payload.answer),
-    suggestions: payload.suggestions,
-    quickReplies: payload.quickReplies,
+    answer: safeFallback || NO_DATA_ANSWER,
+    suggestions: payload.suggestions.length
+      ? payload.suggestions
+      : ["Tìm sản phẩm", "Tra cứu đơn hàng", "Hướng dẫn thanh toán"],
+    quickReplies: payload.quickReplies.length
+      ? payload.quickReplies
+      : ["Tìm sản phẩm", "Tra cứu đơn hàng", "Hỗ trợ thanh toán"],
   };
 };
 
@@ -528,6 +800,211 @@ const normalizeMaterialHint = (value) => {
   if (/bac|silver|sterling/.test(text)) return "bạc";
   if (/vang|gold/.test(text)) return "vàng";
   return String(value || "").trim();
+};
+
+const normalizeLookupName = (value) => slugifyLite(asText(value, 180));
+
+const resolveCollectionByName = async (name) => {
+  const normalized = normalizeLookupName(name);
+  if (!normalized) return null;
+
+  const all = await Collection.find({ deleted: false })
+    .select("name slug description createdAt")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return (
+    all.find(
+      (item) =>
+        normalizeLookupName(item?.name) === normalized ||
+        normalizeLookupName(String(item?.slug || "").replace(/-/g, " ")) === normalized
+    ) || null
+  );
+};
+
+const fetchAllCollectionsSummary = async () => {
+  const collections = await Collection.find({ deleted: false })
+    .select("name slug description createdAt")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return collections.map((item) => ({
+    id: String(item?._id || ""),
+    name: asText(item?.name, 120),
+    slug: asText(item?.slug, 120),
+    description: asText(item?.description, 220),
+  }));
+};
+
+const resolveCategoryByName = async (name) => {
+  const normalized = normalizeLookupName(name);
+  if (!normalized) return null;
+
+  const all = await Category.find({ deleted: false })
+    .select("name slug parent createdAt")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return (
+    all.find(
+      (item) =>
+        normalizeLookupName(item?.name) === normalized ||
+        normalizeLookupName(String(item?.slug || "").replace(/-/g, " ")) === normalized
+    ) || null
+  );
+};
+
+const fetchAllCategories = async () =>
+  Category.find({ deleted: false })
+    .select("name slug parent position createdAt")
+    .sort({ position: 1, createdAt: -1 })
+    .lean();
+
+const collectDescendantCategoryIds = (rootId, categories) => {
+  const all = asArray(categories);
+  const childrenByParent = new Map();
+  for (const category of all) {
+    const parent = String(category?.parent || "").trim();
+    if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
+    childrenByParent.get(parent).push(category);
+  }
+
+  const visited = new Set();
+  const queue = [String(rootId || "")].filter(Boolean);
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    for (const child of childrenByParent.get(current) || []) {
+      const childId = String(child?._id || "");
+      if (childId && !visited.has(childId)) queue.push(childId);
+    }
+  }
+  return Array.from(visited);
+};
+
+const isRootCategory = (category) => {
+  const parent = String(category?.parent || "").trim();
+  return !parent;
+};
+
+const buildCategoryNode = (category, children) => ({
+  id: String(category?._id || ""),
+  name: asText(category?.name, 120),
+  slug: asText(category?.slug, 120),
+  children: children.map((item) => ({
+    id: String(item?._id || ""),
+    name: asText(item?.name, 120),
+    slug: asText(item?.slug, 120),
+  })),
+});
+
+const buildCategoryOverview = async () => {
+  const categories = await fetchAllCategories();
+  const byParent = new Map();
+  for (const category of categories) {
+    const parent = String(category?.parent || "").trim();
+    if (!byParent.has(parent)) byParent.set(parent, []);
+    byParent.get(parent).push(category);
+  }
+
+  return categories
+    .filter((item) => isRootCategory(item))
+    .map((root) => buildCategoryNode(root, byParent.get(String(root?._id || "")) || []));
+};
+
+const buildCategoryDetail = async (category) => {
+  const categories = await fetchAllCategories();
+  const children = categories.filter(
+    (item) => String(item?.parent || "") === String(category?._id || "")
+  );
+  return buildCategoryNode(category, children);
+};
+
+const fetchProductsByCollection = async (collectionId, limit) => {
+  const rows = await Product.find({ deleted: false, collections: collectionId })
+    .populate("category", "name slug")
+    .populate("collections", "name slug")
+    .select(
+      "name slug description options variants priceMin priceMax category collections engraving"
+    )
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+
+  return rows.map(buildProductSummaryFromDoc).filter(Boolean);
+};
+
+const fetchProductsByCategory = async (categoryId, limit) => {
+  const categories = await fetchAllCategories();
+  const categoryIds = collectDescendantCategoryIds(categoryId, categories);
+  const rows = await Product.find({ deleted: false, category: { $in: categoryIds } })
+    .populate("category", "name slug")
+    .populate("collections", "name slug")
+    .select(
+      "name slug description options variants priceMin priceMax category collections engraving"
+    )
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+
+  return rows.map(buildProductSummaryFromDoc).filter(Boolean);
+};
+
+const countProductsByCategoryTree = async (categoryId) => {
+  const categories = await fetchAllCategories();
+  const categoryIds = collectDescendantCategoryIds(categoryId, categories);
+  return Product.countDocuments({ deleted: false, category: { $in: categoryIds } });
+};
+
+const fetchCategoryCollections = async (categoryId) => {
+  const rows = await Product.find({ deleted: false, category: categoryId })
+    .select("collections")
+    .lean();
+  const collectionIds = [
+    ...new Set(rows.flatMap((item) => asArray(item?.collections).map(String))),
+  ];
+  if (!collectionIds.length) return [];
+  const collections = await Collection.find({ _id: { $in: collectionIds }, deleted: false })
+    .select("name slug")
+    .sort({ createdAt: -1 })
+    .lean();
+  return collections.map((item) => ({
+    name: asText(item?.name, 120),
+    slug: asText(item?.slug, 120),
+  }));
+};
+
+const fetchTopWishlistProducts = async (limit) => {
+  const rows = await Wishlist.aggregate([
+    {
+      $group: {
+        _id: "$productId",
+        wishCount: { $sum: 1 },
+        lastWishAt: { $max: "$createdAt" },
+      },
+    },
+    { $sort: { wishCount: -1, lastWishAt: -1 } },
+    { $limit: limit },
+    {
+      $lookup: {
+        from: "product",
+        localField: "_id",
+        foreignField: "_id",
+        as: "product",
+      },
+    },
+    { $unwind: { path: "$product", preserveNullAndEmptyArrays: false } },
+    { $match: { "product.deleted": false } },
+  ]);
+
+  return rows
+    .map((row) => {
+      const product = buildProductSummaryFromDoc(row.product);
+      if (!product) return null;
+      return { ...product, wishCount: Math.max(0, Number(row.wishCount) || 0) };
+    })
+    .filter(Boolean);
 };
 
 const buildPaymentGuide = (method) => {
@@ -678,6 +1155,7 @@ const createToolExecutor =
         return {
           ok: true,
           requestedNeed: yeuCau,
+          bestSeller: catalog?.request?.bestSeller === true,
           total: asArray(catalog?.products).length,
           products: asArray(catalog?.products).slice(0, soLuong).map(buildProductSummary),
         };
@@ -787,6 +1265,119 @@ const createToolExecutor =
         return {
           ok: true,
           shippingPolicy: buildShippingPolicyGuide(),
+        };
+      }
+
+      if (name === "layThongTinBoSuuTap") {
+        const tenBoSuuTap = asText(args?.tenBoSuuTap, 180);
+        if (!tenBoSuuTap) {
+          return {
+            ok: true,
+            collections: await fetchAllCollectionsSummary(),
+          };
+        }
+
+        const collection = await resolveCollectionByName(tenBoSuuTap);
+        if (!collection?._id) {
+          return { ok: false, notFound: true, requestedName: tenBoSuuTap };
+        }
+
+        const productCount = await Product.countDocuments({
+          deleted: false,
+          collections: collection._id,
+        });
+
+        return {
+          ok: true,
+          requestedName: tenBoSuuTap,
+          productCount,
+          collection: {
+            id: String(collection._id),
+            name: asText(collection.name, 120),
+            slug: asText(collection.slug, 120),
+            description: asText(collection.description, 220),
+          },
+        };
+      }
+
+      if (name === "timSanPhamTheoBoSuuTap") {
+        const tenBoSuuTap = asText(args?.tenBoSuuTap, 180);
+        const soLuong = Math.min(6, Math.max(1, Number(args?.soLuong) || 4));
+        if (!tenBoSuuTap) return { ok: false, error: "missing_collection_name" };
+
+        const collection = await resolveCollectionByName(tenBoSuuTap);
+        if (!collection?._id) {
+          return { ok: false, notFound: true, requestedName: tenBoSuuTap };
+        }
+
+        return {
+          ok: true,
+          requestedName: tenBoSuuTap,
+          collection: {
+            id: String(collection._id),
+            name: asText(collection.name, 120),
+            slug: asText(collection.slug, 120),
+          },
+          products: await fetchProductsByCollection(collection._id, soLuong),
+        };
+      }
+
+      if (name === "layDanhMucSanPham") {
+        const tenDanhMuc = asText(args?.tenDanhMuc, 180);
+        if (!tenDanhMuc) {
+          return {
+            ok: true,
+            categories: await buildCategoryOverview(),
+          };
+        }
+
+        const category = await resolveCategoryByName(tenDanhMuc);
+        if (!category?._id) {
+          return { ok: false, notFound: true, requestedName: tenDanhMuc };
+        }
+
+        const productCount = await countProductsByCategoryTree(category._id);
+        const collections = await fetchCategoryCollections(category._id);
+        return {
+          ok: true,
+          requestedName: tenDanhMuc,
+          categories: [
+            {
+              ...(await buildCategoryDetail(category)),
+              productCount,
+              collections,
+            },
+          ],
+        };
+      }
+
+      if (name === "timSanPhamTheoDanhMuc") {
+        const tenDanhMuc = asText(args?.tenDanhMuc, 180);
+        const soLuong = Math.min(6, Math.max(1, Number(args?.soLuong) || 4));
+        if (!tenDanhMuc) return { ok: false, error: "missing_category_name" };
+
+        const category = await resolveCategoryByName(tenDanhMuc);
+        if (!category?._id) {
+          return { ok: false, notFound: true, requestedName: tenDanhMuc };
+        }
+
+        return {
+          ok: true,
+          requestedName: tenDanhMuc,
+          category: {
+            id: String(category._id),
+            name: asText(category.name, 120),
+            slug: asText(category.slug, 120),
+          },
+          products: await fetchProductsByCategory(category._id, soLuong),
+        };
+      }
+
+      if (name === "laySanPhamYeuThichNhat") {
+        const soLuong = Math.min(5, Math.max(1, Number(args?.soLuong) || 3));
+        return {
+          ok: true,
+          products: await fetchTopWishlistProducts(soLuong),
         };
       }
 

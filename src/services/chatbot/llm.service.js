@@ -115,6 +115,87 @@ const FUNCTION_DECLARATIONS = [
     },
   },
   {
+    name: "layThongTinBoSuuTap",
+    description:
+      "Lay danh sach bo suu tap cua cua hang, hoac kiem tra mot bo suu tap cu the co ton tai trong he thong khong va lay thong tin co ban cua bo suu tap do.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        tenBoSuuTap: {
+          type: "string",
+          description:
+            "Ten bo suu tap khach dang hoi. Co the bo trong neu khach hoi cua hang co nhung bo suu tap nao.",
+        },
+      },
+    },
+  },
+  {
+    name: "timSanPhamTheoBoSuuTap",
+    description:
+      "Tim san pham thuoc mot bo suu tap cu the. Chi duoc tra ket qua neu bo suu tap ton tai trong he thong.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        tenBoSuuTap: {
+          type: "string",
+          description: "Ten bo suu tap can tim san pham",
+        },
+        soLuong: {
+          type: "number",
+          description: "So san pham muon lay ra, thuong tu 3 den 6",
+        },
+      },
+      required: ["tenBoSuuTap"],
+    },
+  },
+  {
+    name: "layDanhMucSanPham",
+    description:
+      "Lay danh sach danh muc trang suc cua cua hang hoac kiem tra mot danh muc cu the co ton tai trong he thong khong.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        tenDanhMuc: {
+          type: "string",
+          description: "Ten danh muc neu khach muon kiem tra cu the, vi du nhan, vong tay, charm",
+        },
+      },
+    },
+  },
+  {
+    name: "timSanPhamTheoDanhMuc",
+    description:
+      "Tim san pham theo mot danh muc cu the nhu nhan, vong tay, day chuyen, hoa tai. Chi tra ket qua neu danh muc ton tai trong he thong.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        tenDanhMuc: {
+          type: "string",
+          description: "Ten danh muc can tim san pham",
+        },
+        soLuong: {
+          type: "number",
+          description: "So san pham muon lay ra, thuong tu 3 den 6",
+        },
+      },
+      required: ["tenDanhMuc"],
+    },
+  },
+  {
+    name: "laySanPhamYeuThichNhat",
+    description:
+      "Lay danh sach san pham duoc yeu thich nhat dua tren so luot wishlist cao nhat trong he thong.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        soLuong: {
+          type: "number",
+          description: "So san pham muon lay ra, thuong tu 3 den 5",
+        },
+      },
+    },
+  },
+  {
     name: "traCuuDonHang",
     description: "Tra cuu trang thai don hang theo ma don, email hoac so dien thoai cua khach.",
     parametersJsonSchema: {
@@ -160,6 +241,11 @@ Quy tắc vận hành:
 - Nếu khách hỏi về cách chọn size vòng tay hoặc đo cổ tay, hãy gọi function layHuongDanChonSizeVongTay.
 - Nếu khách hỏi về đổi trả, hoàn hàng, lỗi sản phẩm, giao sai hàng hoặc điều kiện khiếu nại, hãy gọi function layChinhSachDoiTraHoanHang.
 - Nếu khách hỏi về giao hàng, phí ship, miễn phí vận chuyển hoặc phạm vi giao hàng, hãy gọi function layChinhSachGiaoHang.
+- Nếu khách hỏi cửa hàng có những bộ sưu tập nào, hãy gọi layThongTinBoSuuTap mà không cần tenBoSuuTap. Nếu khách hỏi một bộ sưu tập cụ thể hoặc sản phẩm thuộc bộ sưu tập, hãy gọi layThongTinBoSuuTap hoặc timSanPhamTheoBoSuuTap.
+- Nếu khách hỏi về danh mục trang sức, hãy gọi layDanhMucSanPham hoặc timSanPhamTheoDanhMuc.
+- Nếu khách hỏi sản phẩm được yêu thích nhất, hãy gọi laySanPhamYeuThichNhat và hiểu "yêu thích" là theo số lượt wishlist, không phải sold.
+- Chỉ được trả lời dựa trên dữ liệu do function trả về hoặc chính sách đã được cấu hình trong hệ thống.
+- Nếu không có function phù hợp hoặc function không trả ra dữ liệu cần thiết, phải nói rõ là hiện hệ thống chưa có thông tin đó và mời khách hỏi nội dung khác.
 - Không được bịa giá, tồn kho, trạng thái đơn, phương thức thanh toán hay thông số sản phẩm nếu function chưa trả về.
 - Nếu function báo không tìm thấy dữ liệu, nói rõ là hệ thống chưa tìm thấy và hướng dẫn khách cung cấp lại tên sản phẩm, link, mã đơn, email hoặc số điện thoại.
 - Chỉ dùng dữ liệu do function trả về để kết luận. Không tự thêm dữ kiện bên ngoài.

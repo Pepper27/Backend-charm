@@ -72,35 +72,74 @@ const variantMatchesMaterialHint = (variant, hint) => {
   return materialText.includes(normalizedHint);
 };
 
+const variantMatchesColorHint = (variant, hint, product) => {
+  const normalizedHint = slugifyLite(hint);
+  const hay = slugifyLite(
+    `${variant?.color || ""} ${variant?.name || ""} ${product?.name || ""} ${product?.description || ""}`
+  );
+  if (!normalizedHint) return true;
+  if (!hay) return false;
+  if (normalizedHint === "xanh") return /xanh|blue|navy|teal/.test(hay);
+  if (normalizedHint === "hong") return /hong|pink|rose/.test(hay);
+  if (normalizedHint === "do") return /do|red|ruby/.test(hay);
+  if (normalizedHint === "vang") return /vang|gold/.test(hay);
+  if (normalizedHint === "xanh la") return /xanh la|green|emerald/.test(hay);
+  if (normalizedHint === "den") return /den|black/.test(hay);
+  if (normalizedHint === "trang") return /trang|white/.test(hay);
+  if (normalizedHint === "tim") return /tim|purple|violet/.test(hay);
+  if (normalizedHint === "nhieu mau") return /nhieu mau|multicolor|da sac/.test(hay);
+  return hay.includes(normalizedHint);
+};
+
+const productMatchesColorHints = (product, colorHints) => {
+  const hints = asArray(colorHints).filter(Boolean);
+  if (!hints.length) return true;
+  return hints.every((hint) => variantMatchesColorHint({ color: "", name: "" }, hint, product));
+};
+
 const getVariantPrice = (variant) => {
   const price = Number(variant?.price);
   return Number.isFinite(price) && price > 0 ? price : 0;
-};
-
-const variantMatchesRequest = (variant, request) => {
-  const hints = asArray(request?.materialHints).filter(Boolean);
-  const price = getVariantPrice(variant);
-
-  if (hints.length && !hints.every((hint) => variantMatchesMaterialHint(variant, hint))) {
-    return false;
-  }
-  if (request?.priceMin > 0 && (!price || price < request.priceMin)) {
-    return false;
-  }
-  if (request?.priceMax > 0 && (!price || price > request.priceMax)) {
-    return false;
-  }
-  return true;
 };
 
 const getMatchedVariants = (product, request) => {
   const variants = asArray(product?.variants);
   if (!variants.length) return [];
   const hasVariantConstraints =
-    asArray(request?.materialHints).length || request?.priceMin > 0 || request?.priceMax > 0;
+    asArray(request?.materialHints).length ||
+    asArray(request?.colorHints).length ||
+    request?.priceMin > 0 ||
+    request?.priceMax > 0;
   if (!hasVariantConstraints) return variants;
-  return variants.filter((variant) => variantMatchesRequest(variant, request));
+  return variants.filter((variant) => {
+    const materialHints = asArray(request?.materialHints).filter(Boolean);
+    const colorHints = asArray(request?.colorHints).filter(Boolean);
+    const price = getVariantPrice(variant);
+
+    if (
+      materialHints.length &&
+      !materialHints.every((hint) => variantMatchesMaterialHint(variant, hint))
+    ) {
+      return false;
+    }
+    if (
+      colorHints.length &&
+      !colorHints.every((hint) => variantMatchesColorHint(variant, hint, product))
+    ) {
+      return false;
+    }
+    if (request?.priceMin > 0 && (!price || price < request.priceMin)) {
+      return false;
+    }
+    if (request?.priceMax > 0 && (!price || price > request.priceMax)) {
+      return false;
+    }
+    return true;
+  });
 };
+
+const getMatchedVariantSoldCount = (product, request) =>
+  getMatchedVariants(product, request).reduce((sum, item) => sum + (Number(item?.sold) || 0), 0);
 
 const toProductCard = (product, options = {}) => {
   const matchedVariants = asArray(options?.matchedVariants).length
@@ -112,6 +151,7 @@ const toProductCard = (product, options = {}) => {
     (sum, item) => sum + (Number(item?.sold) || 0),
     0
   );
+  const matchedSold = variantPool.reduce((sum, item) => sum + (Number(item?.sold) || 0), 0);
   const variantPrices = variantPool.map((item) => getVariantPrice(item)).filter(Boolean);
   const materialText = uniqueBy(
     variantPool.map((item) => asText(item?.material, 80)).filter(Boolean),
@@ -133,6 +173,7 @@ const toProductCard = (product, options = {}) => {
     description: asText(product?.description, 220),
     canEngrave: Boolean(product?.engraving?.enabled),
     totalSold,
+    matchedSold,
     variantSummaries: asArray(product?.variants).map((item) => ({
       code: asText(item?.code, 60),
       material: asText(item?.material, 80),
@@ -570,6 +611,20 @@ const buildVariantMaterialRegex = (material) => {
   return new RegExp(escapeRegex(material), "i");
 };
 
+const buildVariantColorRegex = (color) => {
+  const normalizedHint = slugifyLite(color);
+  if (normalizedHint === "xanh") return /xanh|blue|navy|teal/i;
+  if (normalizedHint === "hong") return /hồng|hong|pink|rose/i;
+  if (normalizedHint === "do") return /đỏ|do|red|ruby/i;
+  if (normalizedHint === "vang") return /vàng|vang|gold/i;
+  if (normalizedHint === "xanh la") return /xanh lá|xanh la|green|emerald/i;
+  if (normalizedHint === "den") return /đen|den|black/i;
+  if (normalizedHint === "trang") return /trắng|trang|white/i;
+  if (normalizedHint === "tim") return /tím|tim|purple|violet/i;
+  if (normalizedHint === "nhieu mau") return /nhiều màu|nhieu mau|multicolor|đa sắc|da sac/i;
+  return new RegExp(escapeRegex(color), "i");
+};
+
 const CATEGORY_ALIAS_MAP = [
   { slug: "vong-kieng", aliases: ["vòng kiềng", "vong kieng", "kiềng", "kieng", "bangle"] },
   { slug: "vong-da", aliases: ["vòng da", "vong da", "leather bracelet"] },
@@ -753,19 +808,30 @@ const buildProductQuery = async (request, context) => {
   if (request.priceMin > 0) variantRange.$gte = request.priceMin;
   if (request.priceMax > 0) variantRange.$lte = request.priceMax;
 
-  if (request.materialHints.length) {
-    const variantOr = request.materialHints.map((material) => {
-      const elemMatch = {
-        material: { $regex: buildVariantMaterialRegex(material) },
-      };
-      if (Object.keys(variantRange).length) {
-        elemMatch.price = variantRange;
-      }
-      return { variants: { $elemMatch: elemMatch } };
+  if (
+    request.materialHints.length ||
+    request.colorHints.length ||
+    Object.keys(variantRange).length
+  ) {
+    const elemMatch = {};
+    if (request.materialHints.length) {
+      elemMatch.material = { $regex: buildVariantMaterialRegex(request.materialHints[0]) };
+    }
+    if (Object.keys(variantRange).length) {
+      elemMatch.price = variantRange;
+    }
+    and.push({ variants: { $elemMatch: elemMatch } });
+  }
+
+  if (request.colorHints.length) {
+    const colorRegex = buildVariantColorRegex(request.colorHints[0]);
+    and.push({
+      $or: [
+        { variants: { $elemMatch: { color: { $regex: colorRegex } } } },
+        { name: { $regex: colorRegex } },
+        { description: { $regex: colorRegex } },
+      ],
     });
-    and.push({ $or: variantOr });
-  } else if (Object.keys(variantRange).length) {
-    and.push({ variants: { $elemMatch: { price: variantRange } } });
   }
 
   return and.length === 1 ? and[0] : { $and: and };
@@ -781,13 +847,17 @@ const rankProducts = (products, request, context) => {
       .map((product) => {
         const matchedVariants = getMatchedVariants(product, request);
         const hasVariantConstraints =
-          asArray(request.materialHints).length || request.priceMin > 0 || request.priceMax > 0;
+          asArray(request.materialHints).length ||
+          asArray(request.colorHints).length ||
+          request.priceMin > 0 ||
+          request.priceMax > 0;
         if (hasVariantConstraints && !matchedVariants.length) {
           return { product, score: -9999 };
         }
         if (
           !matchedVariants.length &&
-          !productMatchesMaterialHints(product, request.materialHints)
+          (!productMatchesMaterialHints(product, request.materialHints) ||
+            !productMatchesColorHints(product, request.colorHints))
         ) {
           return { product, score: -9999 };
         }
@@ -808,6 +878,12 @@ const rankProducts = (products, request, context) => {
             .map((v) => v?.material || "")
             .join(" ")}`;
           if (slugifyLite(hay).includes(slugifyLite(hint))) score += 20;
+        }
+        for (const hint of request.colorHints || []) {
+          const hay = asArray(product?.variants)
+            .map((v) => `${v?.color || ""} ${v?.name || ""}`)
+            .join(" ");
+          if (variantMatchesColorHint({ color: hay }, hint, product)) score += 18;
         }
         for (const hint of uniqueBy(
           [
@@ -854,35 +930,32 @@ const rankProducts = (products, request, context) => {
 const searchCatalogProducts = async ({ message, context }) => {
   const request = context.__searchRequest || parseProductRequest(message, context);
   const query = await buildProductQuery(request, context);
-  const rows = await Product.find(query)
+  const baseQuery = Product.find(query)
     .populate("category", "name slug")
     .populate("collections", "name slug")
     .select(
       "name slug description options variants priceMin priceMax category collections engraving createdAt"
-    )
-    .sort({ createdAt: -1 })
-    .limit(24)
-    .lean();
+    );
 
-  const ranked = rankProducts(rows, request, context).slice(0, MAX_SEARCH_RESULTS);
+  if (request.bestSeller) {
+    baseQuery.limit(160);
+  } else {
+    baseQuery.sort({ createdAt: -1 }).limit(24);
+  }
+
+  const rows = await baseQuery.lean();
+
+  const ranked = rankProducts(rows, request, context);
   const finalProducts = request.bestSeller
     ? [...ranked].sort(
-        (a, b) =>
-          asArray(b?.__matchedVariants || b?.variants).reduce(
-            (sum, item) => sum + (Number(item?.sold) || 0),
-            0
-          ) -
-          asArray(a?.__matchedVariants || a?.variants).reduce(
-            (sum, item) => sum + (Number(item?.sold) || 0),
-            0
-          )
+        (a, b) => getMatchedVariantSoldCount(b, request) - getMatchedVariantSoldCount(a, request)
       )
     : ranked;
   return {
     request,
-    products: finalProducts.map((product) =>
-      toProductCard(product, { matchedVariants: product?.__matchedVariants })
-    ),
+    products: finalProducts
+      .slice(0, MAX_SEARCH_RESULTS)
+      .map((product) => toProductCard(product, { matchedVariants: product?.__matchedVariants })),
   };
 };
 

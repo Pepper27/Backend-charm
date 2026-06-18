@@ -93,6 +93,18 @@ const MATERIAL_SYNONYMS = [
   { key: "da", keywords: ["dây da", "day da", "leather"] },
 ];
 
+const COLOR_SYNONYMS = [
+  { key: "xanh", keywords: ["xanh", "xanh dương", "xanh duong", "blue", "navy", "teal"] },
+  { key: "hồng", keywords: ["hồng", "hong", "pink", "rose"] },
+  { key: "đỏ", keywords: ["đỏ", "do", "red", "ruby"] },
+  { key: "vàng", keywords: ["vàng", "vang", "gold", "golden"] },
+  { key: "xanh lá", keywords: ["xanh lá", "xanh la", "green", "emerald"] },
+  { key: "đen", keywords: ["đen", "den", "black"] },
+  { key: "trắng", keywords: ["trắng", "trang", "white"] },
+  { key: "tím", keywords: ["tím", "tim", "purple", "violet"] },
+  { key: "nhiều màu", keywords: ["nhiều màu", "nhieu mau", "multicolor", "đa sắc", "da sac"] },
+];
+
 const normalizeMaterialHints = (materialHints) => {
   const hints = uniqueBy(asArray(materialHints).filter(Boolean), (item) => item);
   if (hints.includes("mạ vàng")) {
@@ -197,9 +209,16 @@ const parseVariantInquiry = (message) => {
     ).map((item) => item.key)
   );
   const text = slugifyLite(message);
+  const colorHints = uniqueBy(
+    COLOR_SYNONYMS.filter((item) =>
+      item.keywords.some((word) => containsNormalizedTerm(message, word))
+    ).map((item) => item.key),
+    (item) => item
+  );
   return {
     requestedSize,
     materialHints,
+    colorHints,
     asksAvailability: /con|còn|het|hết|ton kho|tồn kho|size nao con|co san|sẵn/.test(text),
     asksPrice: /gia|giá|bao nhieu|bao nhiêu/.test(text),
   };
@@ -211,6 +230,7 @@ const hasSearchState = (request) =>
     (asArray(request.categoryRootSlugs).length ||
       asArray(request.categorySlugs).length ||
       asArray(request.materialHints).length ||
+      asArray(request.colorHints).length ||
       Number(request.priceMin) > 0 ||
       Number(request.priceMax) > 0 ||
       asArray(request.searchTerms).length)
@@ -223,6 +243,7 @@ const isLikelySearchFollowUp = (message, request) => {
     asArray(request?.categoryRootSlugs).length ||
     asArray(request?.categorySlugs).length ||
     asArray(request?.materialHints).length ||
+    asArray(request?.colorHints).length ||
     Number(request?.priceMin) > 0 ||
     Number(request?.priceMax) > 0;
   if (!hasFacetUpdate) return false;
@@ -255,6 +276,9 @@ const mergeSearchRequests = (previousRequest, currentRequest, options = {}) => {
     materialHints: asArray(current.materialHints).length
       ? current.materialHints
       : asArray(previous.materialHints),
+    colorHints: asArray(current.colorHints).length
+      ? current.colorHints
+      : asArray(previous.colorHints),
     priceMin: Number(current.priceMin) > 0 ? current.priceMin : Number(previous.priceMin) || 0,
     priceMax: Number(current.priceMax) > 0 ? current.priceMax : Number(previous.priceMax) || 0,
     searchTerms: usePreviousSearchTerms
@@ -337,6 +361,12 @@ const parseProductRequest = (message, context) => {
       item.keywords.some((word) => containsNormalizedTerm(text, word))
     ).map((item) => item.key)
   );
+  const colorHints = uniqueBy(
+    COLOR_SYNONYMS.filter((item) =>
+      item.keywords.some((word) => containsNormalizedTerm(text, word))
+    ).map((item) => item.key),
+    (item) => item
+  );
 
   let priceMin = 0;
   let priceMax = 0;
@@ -362,6 +392,7 @@ const parseProductRequest = (message, context) => {
       (item) => item
     ),
     materialHints,
+    colorHints,
     bestSeller: /ban chay|bestseller|best seller|pho bien|noi bat nhat|hot nhat/i.test(raw),
     priceMin,
     priceMax,
