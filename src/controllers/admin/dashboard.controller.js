@@ -24,7 +24,7 @@
 
 // module.exports.getDashboard = async (req, res) => {
 //   try {
-//     const thresholdAlmostOver = 5; 
+//     const thresholdAlmostOver = 5;
 
 //     const [
 //       totalClient,
@@ -247,6 +247,13 @@ const PAY_STATUS_MAP = {
   paid: "Đã thanh toán",
 };
 
+const EXCLUDE_APPROVED_RETURN_QUERY = {
+  $or: [
+    { returnRequest: { $exists: false } },
+    { "returnRequest.status": { $in: [null, "", "none", "requested", "rejected"] } },
+  ],
+};
+
 // Hàm helper để tính toán khoảng thời gian dựa trên filterType
 const getTimeBounds = (filterType, startQuery, endQuery) => {
   let start = moment().startOf("month");
@@ -278,45 +285,45 @@ module.exports.getDashboard = async (req, res) => {
   try {
     const { filterType, startDate: sQ, endDate: eQ, productSearch } = req.query;
     const { startDate, endDate } = getTimeBounds(filterType, sQ, eQ);
-    const thresholdAlmostOver = 5; 
+    const thresholdAlmostOver = 5;
 
-    const [
-      totalClient,
-      totalProductAgg,
-      categoryList,
-      productsRaw,
-      allProductsRaw,
-    ] = await Promise.all([
-      AccountClient.countDocuments({ deleted: false }),
-      Product.aggregate([
-        { $match: { deleted: false } },
-        { $unwind: { path: "$variants", preserveNullAndEmptyArrays: true } },
-        { $group: { _id: null, sum: { $sum: { $ifNull: ["$variants.quantity", 0] } } } },
-      ]),
-      Category.find({ deleted: false, parent: "" }).sort({ position: 1 }).select({ _id: 1, name: 1 }).lean(),
-      Product.find({ deleted: false }).select({ name: 1, variants: 1 }).lean(),
-      Product.find({}).select({ name: 1, variants: 1 }).lean(),
-    ]);
+    const [totalClient, totalProductAgg, categoryList, productsRaw, allProductsRaw] =
+      await Promise.all([
+        AccountClient.countDocuments({ deleted: false }),
+        Product.aggregate([
+          { $match: { deleted: false } },
+          { $unwind: { path: "$variants", preserveNullAndEmptyArrays: true } },
+          { $group: { _id: null, sum: { $sum: { $ifNull: ["$variants.quantity", 0] } } } },
+        ]),
+        Category.find({ deleted: false, parent: "" })
+          .sort({ position: 1 })
+          .select({ _id: 1, name: 1 })
+          .lean(),
+        Product.find({ deleted: false }).select({ name: 1, variants: 1 }).lean(),
+        Product.find({}).select({ name: 1, variants: 1 }).lean(),
+      ]);
 
-    let orderMatchQuery = { 
-      deleted: false, 
-      createdAt: { $gte: startDate, $lte: endDate } 
+    let orderMatchQuery = {
+      deleted: false,
+      createdAt: { $gte: startDate, $lte: endDate },
     };
 
     if (productSearch && productSearch.trim() !== "") {
       const matchedProducts = await Product.find({
         name: { $regex: productSearch.trim(), $options: "i" },
-        deleted: false
-      }).select({ _id: 1 }).lean();
+        deleted: false,
+      })
+        .select({ _id: 1 })
+        .lean();
 
-      const matchedProductIds = matchedProducts.map(p => String(p._id));
-    
+      const matchedProductIds = matchedProducts.map((p) => String(p._id));
+
       orderMatchQuery["cart.productId"] = { $in: matchedProductIds };
     }
     const [orderCount, revenueAgg, orderNewRaw, topOrdersRaw] = await Promise.all([
       Order.countDocuments(orderMatchQuery),
       Order.aggregate([
-        { $match: { ...orderMatchQuery, status: "delivered" } },
+        { $match: { ...orderMatchQuery, status: "delivered", ...EXCLUDE_APPROVED_RETURN_QUERY } },
         { $group: { _id: null, sum: { $sum: "$totalPrice" } } },
       ]),
       Order.find(orderMatchQuery)
@@ -328,7 +335,8 @@ module.exports.getDashboard = async (req, res) => {
         deleted: false,
         payStatus: "paid",
         status: { $ne: "cancelled" },
-        createdAt: { $gte: startDate, $lte: endDate }
+        ...EXCLUDE_APPROVED_RETURN_QUERY,
+        createdAt: { $gte: startDate, $lte: endDate },
       })
         .select({ cart: 1, totalPrice: 1 })
         .lean(),
@@ -373,7 +381,12 @@ module.exports.getDashboard = async (req, res) => {
 
         const qty = Number(it?.quantity || 0);
         const lineTotal = Number(lineTotals[idx] || 0);
-        const allocatedRevenue = cart.length === 1 ? orderTotal : sumLine > 0 ? (orderTotal * lineTotal) / sumLine : lineTotal;
+        const allocatedRevenue =
+          cart.length === 1
+            ? orderTotal
+            : sumLine > 0
+              ? (orderTotal * lineTotal) / sumLine
+              : lineTotal;
 
         if (!topAccumulator.has(pid)) {
           topAccumulator.set(pid, { productId: pid, sold: 0, profit: 0 });
@@ -396,10 +409,14 @@ module.exports.getDashboard = async (req, res) => {
     const formattedOrderNew = (orderNewRaw || []).map((order) => {
       const m = moment(order.createdAt);
       const orderCart = (order?.cart || []).map((it) => {
-        const product = allProductMap.get(String(it?.productId || "")) || productMap.get(String(it?.productId || ""));
-        const variant = (product?.variants || []).find((v) => String(v?._id || "") === String(it?.variantId || ""));
+        const product =
+          allProductMap.get(String(it?.productId || "")) ||
+          productMap.get(String(it?.productId || ""));
+        const variant = (product?.variants || []).find(
+          (v) => String(v?._id || "") === String(it?.variantId || "")
+        );
         return {
-          avatar: it?.image || it?.avatar || (variant?.images?.[0] || ""),
+          avatar: it?.image || it?.avatar || variant?.images?.[0] || "",
           name: it?.name || product?.name || "",
           quantity: it?.quantity || 0,
           priceLast: it?.price || variant?.price || 0,
@@ -423,11 +440,16 @@ module.exports.getDashboard = async (req, res) => {
 
     res.status(200).json({
       data: {
-        totalClient, totalProduct, dashboard, almostOver, soldOut, many,
+        totalClient,
+        totalProduct,
+        dashboard,
+        almostOver,
+        soldOut,
+        many,
         categoryList: (categoryList || []).map((c) => ({ id: c._id, name: c.name })),
         topProduct,
         orderNew: formattedOrderNew,
-      }
+      },
     });
   } catch (error) {
     res.status(500).json({ message: "Lỗi khi lấy dashboard", error: error.message });
@@ -437,10 +459,10 @@ module.exports.getDashboard = async (req, res) => {
 module.exports.revenueChart = async (req, res) => {
   try {
     const { filterType, startDate: sQ, endDate: eQ } = req.body || {};
-    
+
     // Tận dụng logic lấy khoảng thời gian
     let { startDate, endDate } = getTimeBounds(filterType, sQ, eQ);
-    
+
     const startCurrent = moment(startDate);
     const endCurrent = moment(endDate);
 
@@ -472,8 +494,18 @@ module.exports.revenueChart = async (req, res) => {
     }
 
     const [orderCurrent, orderPrevious] = await Promise.all([
-      Order.find({ deleted: false, payStatus: "paid", createdAt: { $gte: startCurrent.toDate(), $lte: endCurrent.toDate() } }).lean(),
-      Order.find({ deleted: false, payStatus: "paid", createdAt: { $gte: startPrevious.toDate(), $lte: endPrevious.toDate() } }).lean(),
+      Order.find({
+        deleted: false,
+        payStatus: "paid",
+        ...EXCLUDE_APPROVED_RETURN_QUERY,
+        createdAt: { $gte: startCurrent.toDate(), $lte: endCurrent.toDate() },
+      }).lean(),
+      Order.find({
+        deleted: false,
+        payStatus: "paid",
+        ...EXCLUDE_APPROVED_RETURN_QUERY,
+        createdAt: { $gte: startPrevious.toDate(), $lte: endPrevious.toDate() },
+      }).lean(),
     ]);
 
     let labels = [];
@@ -485,16 +517,23 @@ module.exports.revenueChart = async (req, res) => {
       // Lọc theo 12 tháng
       for (let m = 1; m <= 12; m++) {
         labels.push(`Tháng ${m}`);
-        
-        let sumCur = orderCurrent.filter(o => moment(o.createdAt).month() + 1 === m).reduce((a, b) => a + (b.totalPrice || 0), 0);
-        let sumPrev = orderPrevious.filter(o => moment(o.createdAt).month() + 1 === m).reduce((a, b) => a + (b.totalPrice || 0), 0);
-        
+
+        let sumCur = orderCurrent
+          .filter((o) => moment(o.createdAt).month() + 1 === m)
+          .reduce((a, b) => a + (b.totalPrice || 0), 0);
+        let sumPrev = orderPrevious
+          .filter((o) => moment(o.createdAt).month() + 1 === m)
+          .reduce((a, b) => a + (b.totalPrice || 0), 0);
+
         dataMonthCurrent.push(sumCur);
         dataMonthPrevious.push(sumPrev);
       }
     } else {
       // Lọc theo từng ngày (Dùng cho Tuần, Tháng, và Khoảng ngày)
-      let daysCount = filterType === "month" ? startCurrent.daysInMonth() : endCurrent.diff(startCurrent, "days") + 1;
+      let daysCount =
+        filterType === "month"
+          ? startCurrent.daysInMonth()
+          : endCurrent.diff(startCurrent, "days") + 1;
       if (filterType === "range" && daysCount > 62) daysCount = 31; // Giới hạn nếu khoảng ngày quá rộng tránh crash UI
 
       for (let i = 0; i < daysCount; i++) {
@@ -504,8 +543,12 @@ module.exports.revenueChart = async (req, res) => {
         const currentTargetDate = startCurrent.clone().add(i, "days");
         const previousTargetDate = startPrevious.clone().add(i, "days");
 
-        let sumCur = orderCurrent.filter(o => moment(o.createdAt).isSame(currentTargetDate, 'day')).reduce((a,b) => a + (b.totalPrice || 0), 0);
-        let sumPrev = orderPrevious.filter(o => moment(o.createdAt).isSame(previousTargetDate, 'day')).reduce((a,b) => a + (b.totalPrice || 0), 0);
+        let sumCur = orderCurrent
+          .filter((o) => moment(o.createdAt).isSame(currentTargetDate, "day"))
+          .reduce((a, b) => a + (b.totalPrice || 0), 0);
+        let sumPrev = orderPrevious
+          .filter((o) => moment(o.createdAt).isSame(previousTargetDate, "day"))
+          .reduce((a, b) => a + (b.totalPrice || 0), 0);
 
         dataMonthCurrent.push(sumCur);
         dataMonthPrevious.push(sumPrev);
@@ -521,11 +564,11 @@ module.exports.revenueChart = async (req, res) => {
       dataMonthPrevious,
     });
   } catch (error) {
-    return res.status(500).json({ code: "error", message: "Lỗi biểu đồ doanh thu", error: error.message });
+    return res
+      .status(500)
+      .json({ code: "error", message: "Lỗi biểu đồ doanh thu", error: error.message });
   }
 };
-
-
 
 // module.exports.revenueChart = async (req, res) => {
 //   try {
@@ -592,10 +635,10 @@ module.exports.revenueChart = async (req, res) => {
 module.exports.revenueChart = async (req, res) => {
   try {
     const { filterType, startDate: sQ, endDate: eQ } = req.body || {};
-    
+
     // Lấy mốc thời gian của kỳ này
     let { startDate, endDate } = getTimeBounds(filterType, sQ, eQ);
-    
+
     const startCurrent = moment(startDate);
     const endCurrent = moment(endDate);
 
@@ -610,10 +653,11 @@ module.exports.revenueChart = async (req, res) => {
     }
 
     // Chỉ truy vấn hóa đơn thuộc kỳ hiện tại
-    const orderCurrent = await Order.find({ 
-      deleted: false, 
-      payStatus: "paid", 
-      createdAt: { $gte: startCurrent.toDate(), $lte: endCurrent.toDate() } 
+    const orderCurrent = await Order.find({
+      deleted: false,
+      payStatus: "paid",
+      ...EXCLUDE_APPROVED_RETURN_QUERY,
+      createdAt: { $gte: startCurrent.toDate(), $lte: endCurrent.toDate() },
     }).lean();
 
     let labels = [];
@@ -623,17 +667,20 @@ module.exports.revenueChart = async (req, res) => {
       // Thống kê theo 12 tháng
       for (let m = 1; m <= 12; m++) {
         labels.push(`Tháng ${m}`);
-        
+
         let sumCur = orderCurrent
-          .filter(o => moment(o.createdAt).month() + 1 === m)
+          .filter((o) => moment(o.createdAt).month() + 1 === m)
           .reduce((a, b) => a + (b.totalPrice || 0), 0);
-        
+
         dataMonthCurrent.push(sumCur);
       }
     } else {
       // Thống kê theo từng ngày (Cho Tuần, Tháng, Khoảng ngày)
-      let daysCount = filterType === "month" ? startCurrent.daysInMonth() : endCurrent.diff(startCurrent, "days") + 1;
-      if (filterType === "range" && daysCount > 31) daysCount = 31; 
+      let daysCount =
+        filterType === "month"
+          ? startCurrent.daysInMonth()
+          : endCurrent.diff(startCurrent, "days") + 1;
+      if (filterType === "range" && daysCount > 31) daysCount = 31;
 
       for (let i = 0; i < daysCount; i++) {
         const currentTargetDate = startCurrent.clone().add(i, "days");
@@ -641,7 +688,10 @@ module.exports.revenueChart = async (req, res) => {
         labels.push(currentTargetDate.format("DD/MM"));
 
         let sumCur = orderCurrent
-          .filter(o => moment(o.createdAt).format("YYYY-MM-DD") === currentTargetDate.format("YYYY-MM-DD"))
+          .filter(
+            (o) =>
+              moment(o.createdAt).format("YYYY-MM-DD") === currentTargetDate.format("YYYY-MM-DD")
+          )
           .reduce((a, b) => a + (b.totalPrice || 0), 0);
 
         dataMonthCurrent.push(sumCur);
@@ -655,7 +705,9 @@ module.exports.revenueChart = async (req, res) => {
       dataMonthCurrent,
     });
   } catch (error) {
-    return res.status(500).json({ code: "error", message: "Lỗi biểu đồ doanh thu", error: error.message });
+    return res
+      .status(500)
+      .json({ code: "error", message: "Lỗi biểu đồ doanh thu", error: error.message });
   }
 };
 module.exports.inventory = async (req, res) => {
@@ -738,4 +790,3 @@ module.exports.inventory = async (req, res) => {
     return res.status(500).json({ code: "error", message: "Server Error", error: err.message });
   }
 };
-

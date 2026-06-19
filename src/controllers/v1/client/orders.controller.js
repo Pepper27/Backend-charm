@@ -2,6 +2,7 @@ const Order = require("../../../models/order.model");
 const v1 = require("../../../helper/v1-response.helper");
 const mongoose = require("mongoose");
 const Product = require("../../../models/product.model");
+const { createReturnRequest } = require("../../../services/orders/return-request.service");
 
 const normalizeStatus = (value) => String(value || "").trim();
 
@@ -132,7 +133,7 @@ module.exports.list = async (req, res) => {
       .skip(skip)
       .limit(limit)
       .select(
-        "orderCode totalPrice status method payStatus fullName email phone address createdAt updatedAt cart bundles payment"
+        "orderCode totalPrice status method payStatus fullName email phone address createdAt updatedAt cart bundles payment returnRequest"
       )
       .lean();
 
@@ -215,20 +216,18 @@ module.exports.cancel = async (req, res) => {
       }
 
       const isPaidZaloPay =
-        (String(order.method || "").trim().toLowerCase() === "zalopay" ||
-          String(order?.payment?.provider || "").trim().toLowerCase() === "zalopay") &&
+        (String(order.method || "")
+          .trim()
+          .toLowerCase() === "zalopay" ||
+          String(order?.payment?.provider || "")
+            .trim()
+            .toLowerCase() === "zalopay") &&
         inferPayStatus(order) === "paid";
 
       if (isPaidZaloPay) {
         await session.abortTransaction();
         const latest = await Order.findById(order._id).lean();
-        return v1.fail(
-          res,
-          409,
-          "CONFLICT",
-          "ZaloPay paid orders cannot be cancelled",
-          latest
-        );
+        return v1.fail(res, 409, "CONFLICT", "ZaloPay paid orders cannot be cancelled", latest);
       }
 
       // Allowed cancel statuses for customer
@@ -301,6 +300,38 @@ module.exports.cancel = async (req, res) => {
       session.endSession();
     }
   } catch (error) {
+    return v1.serverError(res, error);
+  }
+};
+
+module.exports.requestReturn = async (req, res) => {
+  try {
+    if (!req.auth?.id || req.auth.role !== "client") {
+      return v1.fail(res, 401, "UNAUTHORIZED", "Missing client identity");
+    }
+
+    const orderCode = String(req.params.orderCode || "").trim();
+    const order = await createReturnRequest({
+      orderCode,
+      reason: req.body?.reason,
+      images: req.body?.images,
+      clientId: String(req.auth.id),
+      guestId: "",
+      email: "",
+      phone: "",
+    });
+
+    return v1.created(res, order);
+  } catch (error) {
+    if (error && error.status) {
+      return v1.fail(
+        res,
+        error.status,
+        error.code || "ERROR",
+        error.message || "Request failed",
+        error.meta
+      );
+    }
     return v1.serverError(res, error);
   }
 };

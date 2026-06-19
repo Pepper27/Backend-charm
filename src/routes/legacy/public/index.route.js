@@ -32,6 +32,7 @@ router.post("/zalopay/confirm", zaloController.confirm);
 
 // Guest/client order tracking (by phone/email) and order detail.
 router.get("/orders/lookup", checkoutController.lookupOrders);
+router.post("/orders/:orderCode/return-request", checkoutController.requestOrderReturn);
 router.get("/orders/:orderCode", checkoutController.getOrderByCode);
 router.post("/orders/email", checkoutController.emailOrders);
 
@@ -45,9 +46,9 @@ router.patch("/cart/products/:lineId", cartController.patchProduct);
 router.delete("/cart/products/:lineId", cartController.deleteProduct);
 
 // Engraving render endpoint (server-side composition)
-router.post('/engraving/render', engravingController.render);
+router.post("/engraving/render", engravingController.render);
 // Upload client-generated data URLs (thumbnails) -> Cloudinary
-router.post('/engraving/upload', engravingController.uploadDataUrl);
+router.post("/engraving/upload", engravingController.uploadDataUrl);
 
 router.get("/designs", designController.listDesigns);
 router.post("/designs", designController.saveDesignAndAddToCart);
