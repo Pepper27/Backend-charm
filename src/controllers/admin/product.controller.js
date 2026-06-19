@@ -331,7 +331,11 @@ module.exports.createProduct = async (req, res) => {
     const options = parseJsonField(req.body.options, {});
     const variants = parseJsonField(req.body.variants, []);
     const files = req.files || [];
-
+    const nameSlug = slugify(String(name || "").trim(), { lower: true, strict: true });
+    const existName = await Product.findOne({ slug: nameSlug, deleted: false }).lean();
+    if (existName) {
+      return res.status(400).json({ message: "Tên sản phẩm đã tồn tại, vui lòng nhập tên khác!" });
+    }
     const fileMap = {};
     files.forEach((file) => {
       if (!fileMap[file.fieldname]) fileMap[file.fieldname] = [];

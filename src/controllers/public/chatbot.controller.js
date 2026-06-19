@@ -574,25 +574,28 @@ const rankProducts = (products, request, context) => {
 const searchCatalogProducts = async ({ message, context }) => {
   const request = parseProductRequest(message, context);
   const query = await buildProductQuery(request, context);
+  
+  // Xác định điều kiện sort của MongoDB trước khi truy vấn
+  let sortCondition = { createdAt: -1 };
+  if (request.bestSeller) {
+    // Vì 'sold' nằm trong từng variantSchema, bạn có thể tính tổng hoặc 
+    // tốt nhất là nên có 1 trường 'totalSold' tầng root ở Product schema được tính qua pre-save.
+    // Nếu chưa có trường root, tạm thời sort theo variant đầu tiên hoặc dùng aggregation.
+    sortCondition = { "variants.sold": -1 }; 
+  }
+
   const rows = await Product.find(query)
     .populate("category", "name slug")
     .populate("collections", "name slug")
     .select("name slug description options variants priceMin priceMax category collections engraving createdAt")
-    .sort({ createdAt: -1 })
+    .sort(sortCondition) 
     .limit(24)
     .lean();
 
   const ranked = rankProducts(rows, request, context).slice(0, MAX_SEARCH_RESULTS);
-  const finalProducts = request.bestSeller
-    ? [...ranked].sort((a, b) => {
-        const soldA = asArray(a?.variants).reduce((sum, item) => sum + (Number(item?.sold) || 0), 0);
-        const soldB = asArray(b?.variants).reduce((sum, item) => sum + (Number(item?.sold) || 0), 0);
-        return soldB - soldA;
-      })
-    : ranked;
   return {
     request,
-    products: finalProducts.map(toProductCard),
+    products: ranked,
   };
 };
 
