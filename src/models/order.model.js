@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const { Types } = require("mongoose");
-slug = require('mongoose-slug-updater')
-mongoose.plugin(slug)
+const slug = require("mongoose-slug-updater");
+mongoose.plugin(slug);
 const orderBundleItemSchema = new mongoose.Schema(
   {
     slotIndex: Number,
@@ -77,10 +77,10 @@ const schema = new mongoose.Schema(
 
     // Contact snapshot at checkout time.
     fullName: { type: String, default: "" },
-    slug:{
-      type: String, 
+    slug: {
+      type: String,
       slug: "fullName",
-      unique:true
+      unique: true,
     },
 
     email: { type: String, default: "" },
@@ -107,6 +107,23 @@ const schema = new mongoose.Schema(
       type: String,
       enum: ["unpaid", "paid"],
       default: "unpaid",
+    },
+    returnRequest: {
+      status: {
+        type: String,
+        enum: ["none", "requested", "approved", "rejected"],
+        default: "none",
+      },
+      reason: { type: String, default: "" },
+      images: { type: [String], default: [] },
+      requestedAt: Date,
+      requestedBy: { type: String, enum: ["customer", "", "admin", "system"], default: "" },
+      reviewedAt: Date,
+      reviewedBy: { type: String, default: "" },
+      adminNote: { type: String, default: "" },
+      restocked: { type: Boolean, default: false },
+      soldReversed: { type: Boolean, default: false },
+      revenueReversed: { type: Boolean, default: false },
     },
     // Cancellation metadata
     cancelledAt: Date,

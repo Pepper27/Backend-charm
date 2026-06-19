@@ -3,6 +3,7 @@ const Product = require("../../models/product.model");
 const mongoose = require("mongoose");
 const slugify = require("slugify");
 const ExcelJS = require("exceljs");
+const { reviewReturnRequest } = require("../../services/orders/return-request.service");
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const inferPayStatus = (o) => {
@@ -21,7 +22,9 @@ const inferPayStatus = (o) => {
 };
 
 const buildPayStatusFind = (payStatus) => {
-  const v = String(payStatus || "").trim().toLowerCase();
+  const v = String(payStatus || "")
+    .trim()
+    .toLowerCase();
   if (!v) return null;
 
   const paidOr = [
@@ -86,14 +89,8 @@ module.exports.getOrders = async (req, res) => {
     if (keyword) {
       const rx = new RegExp(escapeRegex(keyword), "i");
       const keywordSlug = slugify(keyword, { lower: true, strict: true, locale: "vi" });
-      const sl = new RegExp(keywordSlug.replace(/-/g, ".*"), "i"); 
-      find.$or = [
-        { orderCode: rx },
-        { phone: rx },
-        { email: rx },
-        { slug: sl },
-        { address: rx },
-      ];
+      const sl = new RegExp(keywordSlug.replace(/-/g, ".*"), "i");
+      find.$or = [{ orderCode: rx }, { phone: rx }, { email: rx }, { slug: sl }, { address: rx }];
     }
 
     const total = await Order.countDocuments(find);
@@ -106,7 +103,7 @@ module.exports.getOrders = async (req, res) => {
       .skip(skip)
       .limit(limit)
       .select(
-        "orderCode userId cart bundles fullName email totalPrice status method payStatus address phone payment createdAt updatedAt"
+        "orderCode userId cart bundles fullName email totalPrice status method payStatus address phone payment returnRequest createdAt updatedAt"
       )
       .populate({ path: "userId", select: "fullName email phone" })
       .lean();
@@ -167,22 +164,32 @@ module.exports.updateOrder = async (req, res) => {
       return res.status(404).json({ message: "Đơn hàng không tồn tại" });
     }
 
-     // Business rule: cash orders are paid upon successful delivery.
-     // If admin marks as delivered, automatically mark payStatus as paid.
-     if (
-       String(req.body?.status) === "delivered" &&
-       String(order.method || "").toLowerCase() === "cash"
-     ) {
-       req.body.payStatus = "paid";
-     }
+    // Business rule: cash orders are paid upon successful delivery.
+    // If admin marks as delivered, automatically mark payStatus as paid.
+    if (
+      String(req.body?.status) === "delivered" &&
+      String(order.method || "").toLowerCase() === "cash"
+    ) {
+      req.body.payStatus = "paid";
+    }
 
     req.body.updatedBy = req.account.id;
     // Business rule: cancelled is terminal. Do not allow admin to change a cancelled order
     // back to any other lifecycle state to avoid stock conflicts. If admin wants
     // to "restore", they should create a new order instead.
-    if (String(order.status) === "cancelled" && req.body.status && String(req.body.status) !== "cancelled") {
+    if (
+      String(order.status) === "cancelled" &&
+      req.body.status &&
+      String(req.body.status) !== "cancelled"
+    ) {
       const latest = await Order.findById(id).lean();
-      return res.status(409).json({ message: "Cancelled orders are terminal and cannot be reverted. Create a new order to restore.", data: latest });
+      return res
+        .status(409)
+        .json({
+          message:
+            "Cancelled orders are terminal and cannot be reverted. Create a new order to restore.",
+          data: latest,
+        });
     }
     await Order.updateOne(
       {
@@ -228,6 +235,35 @@ module.exports.updateOrder = async (req, res) => {
   }
 };
 
+module.exports.reviewReturnRequest = async (req, res) => {
+  try {
+    const updated = await reviewReturnRequest({
+      orderId: req.params.id,
+      action: req.body?.action,
+      adminId: req.account?.id || req.account?._id || "admin",
+      adminNote: req.body?.adminNote,
+    });
+
+    return res.status(200).json({
+      message: "Cập nhật yêu cầu hoàn hàng thành công",
+      data: updated,
+    });
+  } catch (error) {
+    if (error && error.status) {
+      return res.status(error.status).json({
+        code: error.code || "ERROR",
+        message: error.message || "Lỗi xử lý yêu cầu hoàn hàng",
+        data: error.meta || null,
+      });
+    }
+
+    return res.status(500).json({
+      message: "Lỗi khi cập nhật yêu cầu hoàn hàng",
+      error: error.message,
+    });
+  }
+};
+
 module.exports.exportOrders = async (req, res) => {
   try {
     const keyword = String(req.query.keyword || "").trim();
@@ -260,7 +296,11 @@ module.exports.exportOrders = async (req, res) => {
           createdAtFilter.$lte = end;
         }
       }
-      if (createdAtFilter.$gte && createdAtFilter.$lte && createdAtFilter.$gte > createdAtFilter.$lte) {
+      if (
+        createdAtFilter.$gte &&
+        createdAtFilter.$lte &&
+        createdAtFilter.$gte > createdAtFilter.$lte
+      ) {
         return res.status(400).json({ message: "startDate không được lớn hơn endDate" });
       }
       find.createdAt = createdAtFilter;
@@ -269,14 +309,8 @@ module.exports.exportOrders = async (req, res) => {
     if (keyword) {
       const rx = new RegExp(escapeRegex(keyword), "i");
       const keywordSlug = slugify(keyword, { lower: true, strict: true, locale: "vi" });
-      const sl = new RegExp(keywordSlug.replace(/-/g, ".*"), "i"); 
-      find.$or = [
-        { orderCode: rx },
-        { phone: rx },
-        { email: rx },
-        { slug: sl },
-        { address: rx },
-      ];
+      const sl = new RegExp(keywordSlug.replace(/-/g, ".*"), "i");
+      find.$or = [{ orderCode: rx }, { phone: rx }, { email: rx }, { slug: sl }, { address: rx }];
     }
     const orders = await Order.find(find)
       .sort({ createdAt: -1 })
@@ -300,12 +334,21 @@ module.exports.exportOrders = async (req, res) => {
       { header: "Ngày Đặt", key: "createdAt", width: 20 },
     ];
 
-    const STATUS_MAP = { pending: "Chờ xác nhận", confirmed: "Đang chuẩn bị", shipping: "Đang giao", delivered: "Đã giao", cancelled: "Đã hủy" };
+    const STATUS_MAP = {
+      pending: "Chờ xác nhận",
+      confirmed: "Đang chuẩn bị",
+      shipping: "Đang giao",
+      delivered: "Đã giao",
+      cancelled: "Đã hủy",
+    };
     const METHOD_MAP = { cash: "Tiền mặt", zalopay: "ZaloPay" };
     const PAY_MAP = { unpaid: "Chưa thanh toán", paid: "Đã thanh toán" };
 
     orders.forEach((o) => {
-      const itemsCount = (o.cart || []).reduce((sum, item) => sum + (Number(item?.quantity) || 0), 0);
+      const itemsCount = (o.cart || []).reduce(
+        (sum, item) => sum + (Number(item?.quantity) || 0),
+        0
+      );
       const inferredPay = inferPayStatus(o);
 
       worksheet.addRow({
@@ -327,7 +370,7 @@ module.exports.exportOrders = async (req, res) => {
     headerRow.height = 25;
     headerRow.eachCell((cell) => {
       cell.font = { bold: true, color: { argb: "FFFFFF" }, size: 11 };
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "4F81BD" } }; 
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "4F81BD" } };
       cell.alignment = { vertical: "middle", horizontal: "center" };
     });
     worksheet.eachRow((row, rowNumber) => {
@@ -338,7 +381,7 @@ module.exports.exportOrders = async (req, res) => {
         row.getCell("itemsCount").alignment = { horizontal: "center" };
         row.getCell("orderCode").alignment = { horizontal: "center" };
         row.getCell("phone").alignment = { horizontal: "center" };
-        
+
         row.eachCell((cell) => {
           cell.border = {
             top: { style: "thin", color: { argb: "E0E0E0" } },
@@ -349,12 +392,17 @@ module.exports.exportOrders = async (req, res) => {
         });
       }
     });
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename=Danh_sach_don_hang_${Date.now()}.xlsx`);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Danh_sach_don_hang_${Date.now()}.xlsx`
+    );
 
     await workbook.xlsx.write(res);
     return res.end();
-
   } catch (error) {
     console.error("Export excel error: ", error);
     return res.status(500).json({ message: "Lỗi khi xuất file excel", error: error.message });

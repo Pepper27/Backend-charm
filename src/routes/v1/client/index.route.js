@@ -10,5 +10,6 @@ router.get("/orders/stats", ordersController.stats);
 router.get("/orders", ordersController.list);
 router.get("/orders/:orderCode", ordersController.getByCode);
 router.post("/orders/:orderCode/cancel", ordersController.cancel);
+router.post("/orders/:orderCode/return-request", ordersController.requestReturn);
 
 module.exports = router;

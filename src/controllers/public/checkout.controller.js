@@ -8,6 +8,7 @@ const { validateAndPrice } = require("../../helper/mix-validate.helper");
 const helper = require("../../helper/generate.helper");
 const mailHelper = require("../../helper/mailer.helper");
 const crypto = require("crypto");
+const { createReturnRequest } = require("../../services/orders/return-request.service");
 
 const normalizePhone = (value) => String(value || "").trim();
 const normalizeName = (value) => String(value || "").trim();
@@ -565,6 +566,41 @@ module.exports.getOrderByCode = async (req, res) => {
     return res.status(200).json({ data: order });
   } catch (error) {
     return res.status(500).json({ message: "Lỗi khi lấy chi tiết đơn", error: error.message });
+  }
+};
+
+module.exports.requestOrderReturn = async (req, res) => {
+  try {
+    const orderCode = String(req.params.orderCode || "").trim();
+    const reason = String(req.body?.reason || "").trim();
+    const images = Array.isArray(req.body?.images) ? req.body.images : [];
+    const guestId = String(req.cookies?.guestId || "").trim();
+    const email = normalizeEmail(req.body?.email);
+    const phone = normalizePhone(req.body?.phone);
+
+    const order = await createReturnRequest({
+      orderCode,
+      reason,
+      images,
+      clientId: req.client?._id ? String(req.client._id) : "",
+      guestId,
+      email,
+      phone,
+    });
+
+    return res.status(201).json({
+      message: "Gửi yêu cầu hoàn hàng thành công",
+      data: order,
+    });
+  } catch (error) {
+    if (error && error.status) {
+      return res.status(error.status).json({
+        code: error.code || "ERROR",
+        message: error.message || "Lỗi xử lý yêu cầu hoàn hàng",
+        data: error.meta || null,
+      });
+    }
+    return res.status(500).json({ message: "Lỗi khi gửi yêu cầu hoàn hàng", error: error.message });
   }
 };
 
