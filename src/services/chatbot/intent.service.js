@@ -385,6 +385,7 @@ const parseProductRequest = (message, context) => {
   }
 
   return {
+    rawQuery: raw,
     categoryHints,
     categorySlugs,
     categoryRootSlugs: uniqueBy(

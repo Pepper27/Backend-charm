@@ -111,7 +111,7 @@ module.exports.getProducts = async (req, res) => {
     } = req.query;
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const parsedLimit = parseInt(req.query.limit, 10) || 24;
-    const limit = Math.min(Math.max(parsedLimit, 1), 100);
+    const limit = Math.min(Math.max(parsedLimit, 1), 200);
 
     if (startDate || endDate) {
       const createdAtFilter = {};

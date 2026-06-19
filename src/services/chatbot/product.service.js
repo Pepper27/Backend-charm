@@ -558,6 +558,90 @@ const buildVisibleProductMap = (context) =>
     scoreKey: slugifyLite(item.name),
   }));
 
+const STRICT_SEARCH_STOPWORDS = new Set([
+  "co",
+  "khong",
+  "không",
+  "the",
+  "thể",
+  "nao",
+  "nào",
+  "gi",
+  "gì",
+  "xin",
+  "cho",
+  "toi",
+  "tôi",
+  "t",
+  "minh",
+  "mình",
+  "mot",
+  "một",
+  "vai",
+  "vài",
+  "xem",
+  "goi",
+  "gợi",
+  "goi y",
+  "tu van",
+  "tu",
+  "van",
+  "mau",
+  "mẫu",
+  "san pham",
+  "sản phẩm",
+  "sp",
+  "di",
+]);
+
+const extractStrictSearchTokens = (request) => {
+  const raw = slugifyLite(request?.rawQuery || "");
+  if (!raw) return [];
+
+  const ignored = new Set(
+    [
+      ...asArray(request?.categoryHints),
+      ...asArray(request?.categorySlugs),
+      ...asArray(request?.categoryRootSlugs),
+      ...asArray(request?.materialHints),
+      ...asArray(request?.colorHints),
+    ]
+      .map((item) => slugifyLite(item))
+      .filter(Boolean)
+  );
+
+  return uniqueBy(
+    raw
+      .split(/\s+/)
+      .map((item) => item.trim())
+      .filter(
+        (item) =>
+          item.length >= 2 &&
+          !STRICT_SEARCH_STOPWORDS.has(item) &&
+          !ignored.has(item) &&
+          !/^\d+$/.test(item)
+      ),
+    (item) => item
+  );
+};
+
+const productMatchesStrictTokens = (product, tokens) => {
+  const requiredTokens = asArray(tokens).filter(Boolean);
+  if (!requiredTokens.length) return true;
+  const hay = slugifyLite(
+    [
+      product?.name,
+      product?.description,
+      product?.category?.name,
+      ...asArray(product?.variants).flatMap((variant) => [variant?.name, variant?.color]),
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+  if (!hay) return false;
+  return requiredTokens.every((token) => hay.includes(token));
+};
+
 const scoreNameSimilarity = (needle, hay) => {
   const a = slugifyLite(needle);
   const b = slugifyLite(hay);
@@ -946,11 +1030,15 @@ const searchCatalogProducts = async ({ message, context }) => {
   const rows = await baseQuery.lean();
 
   const ranked = rankProducts(rows, request, context);
+  const strictTokens = extractStrictSearchTokens(request);
+  const narrowed = strictTokens.length
+    ? ranked.filter((product) => productMatchesStrictTokens(product, strictTokens))
+    : ranked;
   const finalProducts = request.bestSeller
-    ? [...ranked].sort(
+    ? [...narrowed].sort(
         (a, b) => getMatchedVariantSoldCount(b, request) - getMatchedVariantSoldCount(a, request)
       )
-    : ranked;
+    : narrowed;
   return {
     request,
     products: finalProducts
