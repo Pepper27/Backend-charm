@@ -111,7 +111,7 @@ const schema = new mongoose.Schema(
     returnRequest: {
       status: {
         type: String,
-        enum: ["none", "requested", "approved", "rejected"],
+        enum: ["none", "requested", "approved", "completed", "rejected"],
         default: "none",
       },
       reason: { type: String, default: "" },

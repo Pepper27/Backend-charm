@@ -250,7 +250,8 @@ const PAY_STATUS_MAP = {
 const EXCLUDE_APPROVED_RETURN_QUERY = {
   $or: [
     { returnRequest: { $exists: false } },
-    { "returnRequest.status": { $in: [null, "", "none", "requested", "rejected"] } },
+    { "returnRequest.status": { $in: [null, "", "none", "requested", "approved", "rejected"] } },
+    { "returnRequest.revenueReversed": { $ne: true } },
   ],
 };
 

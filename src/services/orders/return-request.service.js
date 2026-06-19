@@ -34,13 +34,15 @@ const ensureReturnRequestAllowed = (order) => {
   }
 
   const returnStatus = String(order?.returnRequest?.status || "none");
-  if (["requested", "approved"].includes(returnStatus)) {
+  if (["requested", "approved", "completed"].includes(returnStatus)) {
     throw buildError(
       409,
       "RETURN_REQUEST_EXISTS",
-      returnStatus === "approved"
-        ? "Đơn hàng này đã được duyệt hoàn hàng"
-        : "Đơn hàng này đang có yêu cầu hoàn hàng chờ xử lý"
+      returnStatus === "completed"
+        ? "Đơn hàng này đã hoàn hàng thành công"
+        : returnStatus === "approved"
+          ? "Đơn hàng này đã được duyệt hoàn hàng và đang chờ shop nhận lại hàng"
+          : "Đơn hàng này đang có yêu cầu hoàn hàng chờ xử lý"
     );
   }
 };
@@ -147,8 +149,8 @@ const reviewReturnRequest = async ({ orderId, action, adminId, adminNote }) => {
   const normalizedAction = String(action || "")
     .trim()
     .toLowerCase();
-  if (!["approve", "reject"].includes(normalizedAction)) {
-    throw buildError(400, "BAD_REQUEST", "action phải là approve hoặc reject");
+  if (!["approve", "reject", "complete"].includes(normalizedAction)) {
+    throw buildError(400, "BAD_REQUEST", "action phải là approve, reject hoặc complete");
   }
 
   const session = await mongoose.startSession();
@@ -160,19 +162,18 @@ const reviewReturnRequest = async ({ orderId, action, adminId, adminNote }) => {
     }
 
     const returnStatus = String(order?.returnRequest?.status || "none");
-    if (returnStatus !== "requested") {
-      throw buildError(
-        409,
-        "RETURN_REQUEST_INVALID",
-        "Đơn hàng này không có yêu cầu hoàn hàng chờ xử lý"
-      );
-    }
-
     order.returnRequest.reviewedAt = new Date();
     order.returnRequest.reviewedBy = String(adminId || "").trim();
     order.returnRequest.adminNote = String(adminNote || "").trim();
 
     if (normalizedAction === "reject") {
+      if (returnStatus !== "requested") {
+        throw buildError(
+          409,
+          "RETURN_REQUEST_INVALID",
+          "Chỉ có thể từ chối yêu cầu hoàn hàng đang chờ duyệt"
+        );
+      }
       order.returnRequest.status = "rejected";
       order.statusHistory = order.statusHistory || [];
       order.statusHistory.push({
@@ -185,6 +186,37 @@ const reviewReturnRequest = async ({ orderId, action, adminId, adminNote }) => {
       await order.save({ session });
       await session.commitTransaction();
       return await Order.findById(order._id).lean();
+    }
+
+    if (normalizedAction === "approve") {
+      if (returnStatus !== "requested") {
+        throw buildError(
+          409,
+          "RETURN_REQUEST_INVALID",
+          "Chỉ có thể duyệt yêu cầu hoàn hàng đang chờ xử lý"
+        );
+      }
+
+      order.returnRequest.status = "approved";
+      order.statusHistory = order.statusHistory || [];
+      order.statusHistory.push({
+        status: "return_approved",
+        changedAt: new Date(),
+        changedBy: String(adminId || "admin"),
+        note: order.returnRequest.adminNote,
+      });
+
+      await order.save({ session });
+      await session.commitTransaction();
+      return await Order.findById(order._id).lean();
+    }
+
+    if (returnStatus !== "approved") {
+      throw buildError(
+        409,
+        "RETURN_REQUEST_INVALID",
+        "Chỉ có thể hoàn tất khi yêu cầu hoàn hàng đã được duyệt"
+      );
     }
 
     if (!order.returnRequest.restocked) {
@@ -209,11 +241,11 @@ const reviewReturnRequest = async ({ orderId, action, adminId, adminNote }) => {
       order.returnRequest.soldReversed = true;
     }
 
-    order.returnRequest.status = "approved";
+    order.returnRequest.status = "completed";
     order.returnRequest.revenueReversed = true;
     order.statusHistory = order.statusHistory || [];
     order.statusHistory.push({
-      status: "return_approved",
+      status: "return_completed",
       changedAt: new Date(),
       changedBy: String(adminId || "admin"),
       note: order.returnRequest.adminNote,
