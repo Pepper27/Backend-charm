@@ -247,6 +247,19 @@ const PAY_STATUS_MAP = {
   paid: "Đã thanh toán",
 };
 
+const inferPayStatus = (order) => {
+  if (!order) return "unpaid";
+  if (
+    String(order?.payStatus || "")
+      .trim()
+      .toLowerCase() === "paid"
+  )
+    return "paid";
+  if (Number(order?.payment?.capturedAmount || 0) > 0) return "paid";
+  if (String(order?.payment?.zpTransId || "").trim()) return "paid";
+  return "unpaid";
+};
+
 const EXCLUDE_APPROVED_RETURN_QUERY = {
   $or: [
     { returnRequest: { $exists: false } },
@@ -321,7 +334,7 @@ module.exports.getDashboard = async (req, res) => {
 
       orderMatchQuery["cart.productId"] = { $in: matchedProductIds };
     }
-    const [orderCount, revenueAgg, orderNewRaw, topOrdersRaw] = await Promise.all([
+    const [orderCount, revenueAgg, orderNewRaw, topOrdersRaw, statsOrdersRaw] = await Promise.all([
       Order.countDocuments(orderMatchQuery),
       Order.aggregate([
         { $match: { ...orderMatchQuery, status: "delivered", ...EXCLUDE_APPROVED_RETURN_QUERY } },
@@ -341,13 +354,80 @@ module.exports.getDashboard = async (req, res) => {
       })
         .select({ cart: 1, totalPrice: 1 })
         .lean(),
+      Order.find(orderMatchQuery)
+        .select({
+          status: 1,
+          method: 1,
+          payStatus: 1,
+          payment: 1,
+          totalPrice: 1,
+          returnRequest: 1,
+          createdAt: 1,
+        })
+        .lean(),
     ]);
 
     const dashboard = {
       order: orderCount,
       priceTotal: revenueAgg?.[0]?.sum || 0,
     };
+    const statsOrders = statsOrdersRaw || [];
     const totalProduct = totalProductAgg?.[0]?.sum || 0;
+
+    const orderStats = {
+      pending: 0,
+      confirmed: 0,
+      shipping: 0,
+      delivered: 0,
+      cancelled: 0,
+    };
+    const paymentStats = { paid: 0, unpaid: 0 };
+    const methodStats = { cash: 0, zalopay: 0, other: 0 };
+    const returnStats = {
+      none: 0,
+      requested: 0,
+      approved: 0,
+      completed: 0,
+      rejected: 0,
+      affectedRevenue: 0,
+    };
+
+    statsOrders.forEach((order) => {
+      const safeStatus = String(order?.status || "").trim();
+      if (Object.prototype.hasOwnProperty.call(orderStats, safeStatus)) orderStats[safeStatus] += 1;
+
+      const inferredPay = inferPayStatus(order);
+      if (inferredPay === "paid") paymentStats.paid += 1;
+      else paymentStats.unpaid += 1;
+
+      const safeMethod = String(order?.method || "")
+        .trim()
+        .toLowerCase();
+      if (safeMethod === "cash") methodStats.cash += 1;
+      else if (safeMethod === "zalopay") methodStats.zalopay += 1;
+      else methodStats.other += 1;
+
+      const returnStatus = String(order?.returnRequest?.status || "none").trim();
+      if (Object.prototype.hasOwnProperty.call(returnStats, returnStatus)) {
+        returnStats[returnStatus] += 1;
+      } else {
+        returnStats.none += 1;
+      }
+      if (returnStatus === "completed" || order?.returnRequest?.revenueReversed === true) {
+        returnStats.affectedRevenue += Number(order?.totalPrice || 0);
+      }
+    });
+
+    const deliveredBase = orderStats.delivered || 0;
+    const summaryRates = {
+      paidRate: orderCount ? Number(((paymentStats.paid / orderCount) * 100).toFixed(2)) : 0,
+      cancelRate: orderCount ? Number(((orderStats.cancelled / orderCount) * 100).toFixed(2)) : 0,
+      returnRate: deliveredBase
+        ? Number(
+            (((returnStats.approved + returnStats.completed) / deliveredBase) * 100).toFixed(2)
+          )
+        : 0,
+    };
 
     const products = productsRaw || [];
     let almostOver = 0;
@@ -450,6 +530,13 @@ module.exports.getDashboard = async (req, res) => {
         categoryList: (categoryList || []).map((c) => ({ id: c._id, name: c.name })),
         topProduct,
         orderNew: formattedOrderNew,
+        reportSummary: {
+          orderStats,
+          paymentStats,
+          methodStats,
+          returnStats,
+          summaryRates,
+        },
       },
     });
   } catch (error) {
